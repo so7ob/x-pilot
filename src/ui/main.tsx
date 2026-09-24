@@ -21,6 +21,7 @@ import { getPageCount, pageRange, paginate, type PageSize } from '../domain/pagi
 import { loadSavedFilters, queueSavedFilterSave, type SavedFilterView } from './services/saved-filters';
 import { loadFilterPresets, saveFilterPreset, deleteFilterPreset, presetsForView, hasFilterSelection, normalizePresetName, MAX_FILTER_PRESET_NAME_LENGTH, type FilterPreset, type FilterPresetView } from './services/filter-presets';
 import { isSessionHistoryExportEnvelope } from '../domain/session-export.ts';
+import { buildAnalyticsCsv } from '../domain/analytics-export';
 import { formatDateTime, useI18n } from '../i18n';
 import './styles.css';
 
@@ -87,6 +88,56 @@ function App() {
     anchor.click();
     URL.revokeObjectURL(url);
     setNotice(t('sessions.exported', { count: result.sessions.length }));
+  };
+  const exportAnalyticsCsv = () => {
+    try {
+      const scopeRows = analyticsWorkspaceId === '*'
+        ? allWorkspaceAnalytics
+        : allWorkspaceAnalytics.filter((row) => row.workspaceId === analyticsWorkspaceId);
+      const csv = buildAnalyticsCsv({
+        exportedAt: Date.now(),
+        scopeWorkspaceId: analyticsWorkspaceId,
+        scopeWorkspaceName: workspaces.find((workspace) => workspace.id === analyticsWorkspaceId)?.name,
+        global: globalAnalytics,
+        workspaceRows: scopeRows,
+        sessionsOverTime: analyticsWorkspaceId === '*' ? globalAnalytics.sessionsOverTime : undefined,
+        labels: {
+          reportTitle: t('analytics.title'),
+          exportedAt: t('analytics.exportedAt'),
+          scope: t('analytics.workspaceScope'),
+          scopeAll: t('analytics.allXpilot'),
+          summary: t('analytics.summarySection'),
+          summaryTotalWorkspaces: t('analytics.totalWorkspaces'),
+          summaryTotalPublished: t('analytics.totalPublished'),
+          summaryTotalFailures: t('analytics.totalFailures'),
+          workspaces: t('analytics.workspaceComparison'),
+          workspaceName: t('workspaces.title'),
+          totalSessions: t('analytics.totalSessions'),
+          totalPosts: t('analytics.totalPosts'),
+          published: t('analytics.published'),
+          failed: t('analytics.failed'),
+          skipped: t('analytics.skipped'),
+          successRate: t('analytics.successRate'),
+          averageAttempts: t('analytics.averageAttempts'),
+          duration: t('analytics.duration'),
+          mostActiveBank: t('analytics.mostActiveBank'),
+          lastActivity: t('analytics.lastActivity'),
+          sessionsOverTime: t('analytics.sessionsOverTime'),
+          date: t('analytics.dateColumn'),
+          sessions: t('analytics.sessionsColumn'),
+        },
+      });
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `x-pilot-analytics-${Date.now()}.csv`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setNotice(t('analytics.exportedCsv', { count: scopeRows.length }));
+    } catch {
+      setNotice(t('analytics.exportFailedCsv'));
+    }
   };
   const session = state.session;
   const published = useMemo(() => state.queue.filter((item) => item.status === 'PUBLISHED' || item.status === 'PUBLISHED_UNVERIFIED').length, [state.queue]);
@@ -254,7 +305,7 @@ function App() {
       <section className="card activity-list">{visibleSessions.map((record) => { const attempts = filterHistory(searchData.history, sessionFilters, currentWorkspaceId).filter((attempt) => attempt.sessionId === record.id); const duration = record.completedAt && record.startedAt ? Math.max(0, record.completedAt - record.startedAt) : undefined; return <article className="session-summary" key={record.id}><div className="session-summary-header"><div><strong>{formatDateTime(record.startedAt)}</strong><small>{t('statuses.' + record.status)} · {record.totalItems} {t('units.items')}</small><small dir="ltr">Session: {record.id}</small></div><div className="history-counts"><span>✓ {record.publishedCount}</span><span>! {record.failedCount}</span><span>↷ {record.skippedCount}</span></div><button className="link-action" onClick={() => copySessionSummary(record, attempts.length, duration)}>{t('sessions.copySummary')}</button></div><div className="session-summary-meta"><span>{t('sessions.started')}: {formatDateTime(record.startedAt)}</span><span>{t('sessions.ended')}: {record.completedAt ? formatDateTime(record.completedAt) : t('sessions.notEnded')}</span><span>{t('sessions.duration')}: {duration === undefined ? '—' : String(Math.round(duration / 1000)) + ' ' + t('units.seconds')}</span><span>{t('common.attempts')}: {attempts.length}</span></div><div className="session-attempts"><h3>{t('history.title')}</h3>{attempts.map((attempt) => <div className="history-row" key={attempt.id}><div><strong>{formatDateTime(attempt.timestamp)}</strong><small>{t('statuses.' + attempt.result)} · {attempt.action} · {t('ui.currentItem')} {attempt.queueItemId}</small><small>{t('common.attempts')}: {attempt.attemptNumber}</small>{(attempt.sourceUrl ?? attempt.link) && <a className="secondary-link" href={attempt.sourceUrl ?? attempt.link} target="_blank" rel="noreferrer">{t('sessions.sourceLink')}</a>}{attempt.publishedPostUrl ? <a className="primary-link" href={attempt.publishedPostUrl} target="_blank" rel="noreferrer">{t('sessions.publishedLink')}</a> : attempt.result === 'PUBLISHED' || attempt.result === 'PUBLISHED_UNVERIFIED' ? <small className="muted">{t('sessions.publishedLinkUnavailable')}</small> : null}{attempt.publishedPostUrl && <button className="link-action" onClick={() => void copyText(attempt.publishedPostUrl!)}>{t('history.copyLink')}</button>}{attempt.error && <small className="error-text">{getUserFacingMessage(attempt.error)}</small>}</div></div>)}{!attempts.length && <p className="muted">{t('history.noMatch')}</p>}</div></article>; })}{!visibleSessions.length && <p className="muted">{t('sessions.noMatch')}</p>}</section>
     </section>}
 
-    {activeTab === 'analytics' && <AnalyticsTab global={globalAnalytics} workspace={workspaceAnalytics} workspaceRows={allWorkspaceAnalytics} workspaces={workspaces} selectedWorkspaceId={analyticsWorkspaceId} onWorkspaceChange={setAnalyticsWorkspaceId} />}
+    {activeTab === 'analytics' && <AnalyticsTab global={globalAnalytics} workspace={workspaceAnalytics} workspaceRows={allWorkspaceAnalytics} workspaces={workspaces} selectedWorkspaceId={analyticsWorkspaceId} onWorkspaceChange={setAnalyticsWorkspaceId} onExportCsv={exportAnalyticsCsv} />}
 
     {activeTab === 'diagnostics' && <DiagnosticsTab result={diagnostics} onRun={() => void runDiagnostics()} />}
 
