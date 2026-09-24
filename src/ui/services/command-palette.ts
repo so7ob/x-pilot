@@ -20,13 +20,17 @@ export type PaletteCommand = {
   kind: PaletteCommandKind;
   /** Already-localized display label. */
   label: string;
-  /** Extra search terms (both languages when available). */
+  /** Optional secondary line shown under the label (recents context). */
+  detail?: string;
+  /** Optional search terms (both languages when available). */
   keywords?: string[];
   icon?: string;
   /** Optional payload (tab id, workspace id, action id). */
   value?: string;
   /** Optional keyboard hint shown as a kbd chip (e.g. "/" for focus search). */
   hint?: string;
+  /** Disabled rows stay visible (honest state) but cannot run. */
+  disabled?: boolean;
 };
 
 export type PaletteGroupKind = PaletteCommandKind | 'recent';
@@ -242,29 +246,26 @@ export function buildHighlightSegments(label: string, query: string): HighlightS
 
 /**
  * Groups a flat command list, preserving kind order and dropping empty groups.
- * When `recent.ids` resolves against the command list, a leading "recent"
- * group (in recency order, most recent first) is inserted and those commands
- * are removed from their kind groups to avoid duplication. Unknown ids and
- * duplicates are ignored, so stale/corrupt recent lists degrade gracefully.
+ * When `recent` is supplied (already resolved by `buildRecentCommands`, in
+ * recency order), a leading "recent" group is inserted and those command ids
+ * are removed from their kind groups to avoid duplication. Duplicates inside
+ * the recent list are dropped defensively; an empty list yields no group.
  */
 export function groupCommands(
   commands: PaletteCommand[],
   labels: Record<PaletteCommandKind, string>,
-  recent?: { ids: string[]; label: string },
+  recent?: { commands: PaletteCommand[]; label: string },
 ): PaletteGroup[] {
-  const byId = new Map(commands.map((command) => [command.id, command]));
-  const seen = new Set<string>();
+  const recentIds = new Set<string>();
   const recentCommands: PaletteCommand[] = [];
   if (recent) {
-    for (const id of recent.ids) {
-      if (seen.has(id)) continue;
-      const command = byId.get(id);
-      if (!command) continue;
-      seen.add(id);
+    for (const command of recent.commands) {
+      if (!command || recentIds.has(command.id)) continue;
+      recentIds.add(command.id);
       recentCommands.push(command);
     }
   }
-  const rest = commands.filter((command) => !seen.has(command.id));
+  const rest = commands.filter((command) => !recentIds.has(command.id));
   const order: PaletteCommandKind[] = ['tab', 'action', 'workspace'];
   const groups: PaletteGroup[] = [];
   if (recent && recentCommands.length > 0) {
@@ -296,6 +297,79 @@ export function sanitizeRecentCommandIds(value: unknown): string[] {
     seen.add(entry);
   }
   return [...seen].slice(0, MAX_RECENT_COMMANDS);
+}
+
+/** Live state of one workspace, used to resolve recents entries honestly. */
+export type WorkspaceDirectoryEntry = { name: string; archived: boolean; active: boolean };
+
+export type RecentLabels = {
+  /** Detail line for resolvable workspace-switch entries (e.g. "Switch workspace"). */
+  switch?: string;
+  /** Detail line for the now-active workspace (e.g. "Current workspace"). */
+  current?: string;
+  /** Detail line for an archived workspace (e.g. "Archived"). */
+  archived?: string;
+};
+
+export type BuildRecentCommandsInput = {
+  ids: string[];
+  /** Live command list (the same list the palette renders). */
+  commands: PaletteCommand[];
+  /** Current name/state of every known workspace, keyed by workspace id. */
+  workspaceDirectory: Record<string, WorkspaceDirectoryEntry>;
+  labels?: RecentLabels;
+};
+
+export type RecentCommandsResult = {
+  /** Recents group entries in recency order (stale entries skipped). */
+  commands: PaletteCommand[];
+  /** `workspace:<id>` ids whose workspace no longer exists — safe to prune. */
+  staleWorkspaceIds: string[];
+};
+
+/**
+ * Resolves raw recent-command ids against the live command list AND the
+ * workspace directory, so recents entries stay honest as state changes.
+ * Workspace ids ALWAYS resolve name/state from the directory (the live
+ * command list is only a shape fallback):
+ * - inactive workspace: live name + "switch" detail, runnable;
+ * - now-active workspace: live name + "current" detail (running it is an
+ *   idempotent re-select);
+ * - archived workspace: live name + "archived" detail, disabled (the backend
+ *   refuses activating archived workspaces);
+ * - deleted workspace (or a directory entry without a name): dropped, id
+ *   reported as stale for pruning.
+ * Non-workspace ids that do not resolve right now (context-dependent action
+ * availability) are hidden but NOT reported stale — they may come back.
+ */
+export function buildRecentCommands(input: BuildRecentCommandsInput): RecentCommandsResult {
+  const byId = new Map(input.commands.map((command) => [command.id, command]));
+  const commands: PaletteCommand[] = [];
+  const staleWorkspaceIds: string[] = [];
+  const seen = new Set<string>();
+  for (const id of input.ids) {
+    if (typeof id !== 'string' || !id || seen.has(id)) continue;
+    seen.add(id);
+    if (id.startsWith('workspace:')) {
+      const workspaceId = id.slice('workspace:'.length);
+      const entry = input.workspaceDirectory[workspaceId];
+      if (!entry || !entry.name) {
+        staleWorkspaceIds.push(id);
+        continue;
+      }
+      commands.push({
+        ...(byId.get(id) ?? { id, kind: 'workspace' as const, icon: 'workspace', value: workspaceId }),
+        label: entry.name,
+        detail: entry.archived ? input.labels?.archived : entry.active ? input.labels?.current : input.labels?.switch,
+        disabled: entry.archived || undefined,
+      });
+      continue;
+    }
+    const live = byId.get(id);
+    if (live) commands.push(live);
+    // tab:/action: ids that miss are context-dependent — hide silently.
+  }
+  return { commands, staleWorkspaceIds };
 }
 
 export type PaletteTabEntry = { id: string; label: string; icon?: string };

@@ -18,7 +18,7 @@ import { PublishingWindowsEditor } from './components/publishing-windows-editor'
 import type { TabId } from './types/navigation';
 import { CurrentTweetCard, RecoveryCard, PreflightCard, DryRunCard } from './components/operation-cards';
 import { CommandPalette } from './components/command-palette';
-import { buildPaletteCommands, recordRecentCommand, type PaletteCommand } from './services/command-palette';
+import { buildPaletteCommands, buildRecentCommands, recordRecentCommand, sanitizeRecentCommandIds, type PaletteCommand, type WorkspaceDirectoryEntry } from './services/command-palette';
 import { loadRecentCommands, saveRecentCommands } from './services/recent-commands';
 import { getPageCount, pageRange, paginate, type PageSize } from '../domain/pagination';
 import { loadSavedFilters, queueSavedFilterSave, type SavedFilterView } from './services/saved-filters';
@@ -361,6 +361,25 @@ function App() {
     ],
   }), [t, workspaces, meta?.activeWorkspaceId, activeTab, viewHasSearch]);
 
+  const recentCommands = useMemo(() => {
+    const workspaceDirectory: Record<string, WorkspaceDirectoryEntry> = {};
+    for (const workspace of workspaces) workspaceDirectory[workspace.id] = { name: workspace.name, archived: !!workspace.archived, active: workspace.id === meta?.activeWorkspaceId };
+    return buildRecentCommands({ ids: recentCommandIds, commands: paletteCommands, workspaceDirectory, labels: { switch: t('palette.groupWorkspaces'), current: t('ui.workspaceCurrent'), archived: t('common.archived') } });
+  }, [recentCommandIds, paletteCommands, workspaces, meta?.activeWorkspaceId, t]);
+  // Prune ids whose workspace no longer exists, once, when they appear.
+  const prunedStaleRef = useRef<string>('');
+  useEffect(() => {
+    if (!recentCommands.staleWorkspaceIds.length) { prunedStaleRef.current = ''; return; }
+    const signature = recentCommands.staleWorkspaceIds.join('|');
+    if (prunedStaleRef.current === signature) return;
+    prunedStaleRef.current = signature;
+    setRecentCommandIds((current) => {
+      const next = sanitizeRecentCommandIds(current.filter((id) => !recentCommands.staleWorkspaceIds.includes(id)));
+      void saveRecentCommands(next);
+      return next;
+    });
+  }, [recentCommands.staleWorkspaceIds]);
+
   const refreshAllData = async () => { await Promise.all([refresh(), refreshWorkspaces(), refreshBanks(), refreshHistory(), refreshRuntimeStatus()]); };
 
   const runPaletteCommand = (command: PaletteCommand) => {
@@ -433,7 +452,7 @@ function App() {
       <section className="card settings-card"><div className="settings-heading"><img src={logoUrl} alt="" /><div><span className="eyebrow">{t('common.xPilotSettings')}</span><h2>{t('settings.title')}</h2></div></div><label>{t('settings.language')}<select value={language} onChange={(event) => void setLanguage(event.target.value as 'AUTO' | 'AR' | 'EN')}><option value="AUTO">{t('common.automatic')}</option><option value="AR">{t('common.arabic')}</option><option value="EN">{t('common.english')}</option></select></label><label>{t('settings.interval')}<input type="number" min="0.5" step="0.5" value={settings.intervalMinutes} onChange={(event) => void updateSettings({ ...settings, intervalMinutes: Number(event.target.value) })} /></label><label>{t('settings.maxRetries')}<input type="number" min="0" max="10" value={settings.maxRetries} onChange={(event) => void updateSettings({ ...settings, maxRetries: Number(event.target.value) })} /></label><label>{t('settings.timezone')}<input value={settings.timezone} onChange={(event) => void updateSettings({ ...settings, timezone: event.target.value })} placeholder="Asia/Aden" dir="ltr" /></label><PublishingWindowsEditor windows={settings.publishingWindows} onSave={(publishingWindows) => void updateSettings({ ...settings, publishingWindows })} /><label>{t('settings.duplicatePolicy')}<select value={settings.duplicatePolicy} onChange={(event) => void updateSettings({ ...settings, duplicatePolicy: event.target.value as Settings['duplicatePolicy'] })}><option value="BLOCK">{t('duplicatePolicy.BLOCK')}</option><option value="WARN">{t('duplicatePolicy.WARN')}</option><option value="ALLOW">{t('duplicatePolicy.ALLOW')}</option></select></label><label>{t('settings.badge')}<select value={settings.badgeMode} onChange={(event) => void updateSettings({ ...settings, badgeMode: event.target.value as Settings['badgeMode'] })}><option value="COUNT">{t('badges.remaining')}</option><option value="STATUS">{t('common.status')}</option><option value="NONE">{t('common.none')}</option></select></label><label className="check"><input type="checkbox" checked={settings.notificationsEnabled} onChange={(event) => void updateSettings({ ...settings, notificationsEnabled: event.target.checked })} /> {t('settings.notifications')}</label><label className="check"><input type="checkbox" checked={settings.confirmBeforeStart} onChange={(event) => void updateSettings({ ...settings, confirmBeforeStart: event.target.checked })} /> {t('settings.confirmBeforeStart')}</label><label className="check"><input type="checkbox" checked={settings.keepAutomationTabOpen} onChange={(event) => void updateSettings({ ...settings, keepAutomationTabOpen: event.target.checked })} /> {t('settings.keepAutomationTabOpen')}</label><label className="check"><input type="checkbox" checked={settings.closeTabOnComplete} onChange={(event) => void updateSettings({ ...settings, closeTabOnComplete: event.target.checked })} /> {t('settings.closeTabOnComplete')}</label><div className="profile-actions"><h3>{t('settings.profileTitle')}</h3><p className="muted">{t('settings.profileHint')}</p><button onClick={() => void saveWorkspaceProfile()}>{t('settings.workspaceOverride')}</button><button onClick={() => void clearWorkspaceProfile()}>{t('settings.clearOverride')}</button></div><div className="backup-actions"><h3>{t('backup.title')}</h3><p className="muted">{t('backup.hint')}</p><div className="backup-consent"><label className="check"><input type="checkbox" checked={includeUiPrefs} onChange={(event) => setIncludeUiPrefs(event.target.checked)} /> {t('backup.includePreferences')}</label><p className="muted">{t('backup.includePreferencesHint')}</p></div><div className="row controls-row"><button className="primary" onClick={() => void exportFullBackup()}>{t('backup.export')}</button><label className="button-like">{t('backup.restore')}<input type="file" accept="application/json,.json" onChange={(event) => void restoreFullBackup(event)} /></label></div></div></section>
     </section>}
 
-    <CommandPalette open={paletteOpen} commands={paletteCommands} groupLabels={{ tab: t('palette.groupTabs'), action: t('palette.groupActions'), workspace: t('palette.groupWorkspaces') }} placeholder={t('palette.placeholder')} emptyLabel={t('palette.empty')} footerHints={{ navigate: t('palette.hintNavigate'), run: t('palette.hintRun'), close: t('palette.hintClose') }} recent={recentCommandIds.length ? { ids: recentCommandIds, label: t('palette.groupRecent') } : undefined} onRun={runPaletteCommand} onClose={() => setPaletteOpen(false)} />
+    <CommandPalette open={paletteOpen} commands={paletteCommands} groupLabels={{ tab: t('palette.groupTabs'), action: t('palette.groupActions'), workspace: t('palette.groupWorkspaces') }} placeholder={t('palette.placeholder')} emptyLabel={t('palette.empty')} footerHints={{ navigate: t('palette.hintNavigate'), run: t('palette.hintRun'), close: t('palette.hintClose') }} recent={recentCommands.commands.length ? { commands: recentCommands.commands, label: t('palette.groupRecent') } : undefined} onRun={runPaletteCommand} onClose={() => setPaletteOpen(false)} />
   </main>;
 }
 
