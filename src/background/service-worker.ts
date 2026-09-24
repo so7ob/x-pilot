@@ -1,7 +1,8 @@
-import type { AppState, BankDiffResult, BankSnapshotItem, BulkActionResult, BulkQueueAction, ContentInspection, DiagnosticsCheck, DiagnosticsResult, DryRunItemResult, DryRunResult, QueueItem, RuntimeMessage, RuntimeStatus } from '../domain/models';
+import type { AppState, BankDiffResult, BankSnapshotItem, BulkActionResult, BulkQueueAction, ContentInspection, DiagnosticsCheck, DiagnosticsResult, DryRunItemResult, DryRunResult, PublishAttempt, QueueItem, RuntimeMessage, RuntimeStatus } from '../domain/models';
 import { classifyBankDiff, mergeSelectedDiffItems } from '../domain/bank-diff';
 import { defaultSettings } from '../domain/models';
 import { buildBankExport, buildBanksExport, parseBankImport } from '../domain/bank-transfer';
+import { buildSessionHistoryExport } from '../domain/session-export';
 import { fingerprintTweet } from '../domain/content-fingerprint';
 import { isTerminalItem } from '../domain/state-machine';
 import { extractLinksFromValues } from '../extraction/bank-parser';
@@ -315,6 +316,11 @@ async function handleMessage(message: RuntimeMessage): Promise<unknown> {
     case 'GET_SESSION_HISTORY': {
       const workspaceId = message.workspaceId ?? (await getMeta()).activeWorkspaceId;
       return { workspaceId, sessions: await getHistoricalSessions(workspaceId) };
+    }
+    case 'EXPORT_SESSION_HISTORY': {
+      const workspaceId = message.workspaceId ?? (await getMeta()).activeWorkspaceId;
+      const [sessions, workspaceState] = await Promise.all([getHistoricalSessions(workspaceId), getWorkspaceState(workspaceId)]);
+      return buildSessionHistoryExport({ workspaceId, sessions, attempts: workspaceState.history as PublishAttempt[] });
     }
     case 'PREFLIGHT_CHECK': {
       const workspaceId = message.workspaceId ?? (await getMeta()).activeWorkspaceId;

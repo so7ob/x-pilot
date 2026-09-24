@@ -62,7 +62,7 @@ export interface DiagnosticsResult { checkedAt: number; extensionVersion: string
 export interface BankImportOutcome { workspaceId: string; importedCount: number; importedNames: string[]; }
 export interface StartOverResult extends AppState { resetCount: number; }
 export type RuntimeMessage =
-  | { type: 'GET_STATE' } | { type: 'GET_WORKSPACES' } | { type: 'GET_WORKSPACE_STATE'; workspaceId?: string } | { type: 'GET_SESSION_HISTORY'; workspaceId?: string } | { type: 'PREFLIGHT_CHECK'; workspaceId?: string } | { type: 'RUN_DIAGNOSTICS' }
+  | { type: 'GET_STATE' } | { type: 'GET_WORKSPACES' } | { type: 'GET_WORKSPACE_STATE'; workspaceId?: string } | { type: 'GET_SESSION_HISTORY'; workspaceId?: string } | { type: 'EXPORT_SESSION_HISTORY'; workspaceId?: string } | { type: 'PREFLIGHT_CHECK'; workspaceId?: string } | { type: 'RUN_DIAGNOSTICS' }
   | { type: 'CREATE_WORKSPACE'; name: string; description?: string; color?: string; icon?: string } | { type: 'UPDATE_WORKSPACE_PROFILE'; workspaceId: string; profile: Partial<Settings> } | { type: 'CLEAR_WORKSPACE_PROFILE'; workspaceId: string }
   | { type: 'UPDATE_WORKSPACE'; workspaceId: string; patch: Partial<Pick<Workspace, 'name' | 'description' | 'color' | 'icon' | 'favorite'>> }
   | { type: 'ARCHIVE_WORKSPACE'; workspaceId: string } | { type: 'RESTORE_WORKSPACE'; workspaceId: string } | { type: 'DELETE_WORKSPACE'; workspaceId: string; confirmed: boolean }

@@ -716,6 +716,54 @@ test('UI clipboard actions, workspace color dot, and analytics donut are localiz
   assert.doesNotMatch(analyticsTab, /toLocaleString\('ar'\)/);
 });
 
+test('Dark theme overrides every hardcoded light surface', () => {
+  const styles = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
+  // The component overrides live in the LAST dark block (placed after the light
+  // base rules so they win the cascade); extract exactly that block.
+  const darkStart = styles.lastIndexOf('@media (prefers-color-scheme: dark)');
+  const darkBlock = styles.slice(darkStart, styles.indexOf('\n}', darkStart) + 2);
+  // Every previously light-only component must have a dark override.
+  for (const selector of ['.running-workspace', '.operation-hero', '.dashboard-countdown', '.notice-info', '.notice-error', '.empty-icon', '.session-summary:hover', '.bank-card.selected']) {
+    assert.match(darkBlock, new RegExp(selector.replace(/[.]/g, '\\.')), `dark theme must override ${selector}`);
+  }
+  // Chart tooltips must be locale-formatted, not raw ISO dates.
+  const analyticsTab = fs.readFileSync(path.join(root, 'src/ui/tabs/AnalyticsTab.tsx'), 'utf8');
+  assert.match(analyticsTab, /title=\{`\$\{formatDate\(point\.date\)\}/);
+  assert.doesNotMatch(analyticsTab, /title=\{`\$\{point\.date\}: /);
+});
+
+test('Saved search filters stay UI-only and restore is init-only', () => {
+  const helper = fs.readFileSync(path.join(root, 'src/ui/services/saved-filters.ts'), 'utf8');
+  // Dedicated preference key, isolated from every entity store.
+  assert.match(helper, /xPilotSavedFilters/);
+  for (const banned of ['queue:', 'session:', 'workspaces:', 'xPilotMeta', 'historical']) {
+    assert.doesNotMatch(helper, new RegExp(`chrome\\.storage\\.local\\.set\\(\\{\\s*\\[?['"]?${banned}`), 'helper must never write entity stores');
+  }
+  assert.doesNotMatch(helper, /storage-repository/, 'helper must not import the storage repository');
+  // Restore happens once per panel session; persistence is debounced after restore.
+  assert.match(uiSource, /filtersRestoredRef/);
+  assert.match(uiSource, /loadSavedFilters/);
+  assert.match(uiSource, /queueSavedFilterSave\('queue', queueFilters\)/);
+  assert.match(uiSource, /queueSavedFilterSave\('history', historyFilters\)/);
+  // Restore must pin an explicit saved workspace filter, or fall back to the active workspace.
+  assert.match(uiSource, /restored\.workspaceId \|\| activeId/);
+});
+
+test('Session-history export is read-only tooling with a localized UI action', () => {
+  assert.match(models, /EXPORT_SESSION_HISTORY/);
+  assert.match(serviceWorker, /case 'EXPORT_SESSION_HISTORY': \{\s*const workspaceId = message\.workspaceId \?\? \(await getMeta\(\)\)\.activeWorkspaceId;/);
+  assert.match(serviceWorker, /buildSessionHistoryExport\(\{ workspaceId, sessions, attempts: workspaceState\.history/);
+  assert.match(serviceWorker, /from '\.\.\/domain\/session-export'/);
+  // The handler must stay read-only: no repository write calls inside its body.
+  const exportCase = serviceWorker.slice(serviceWorker.indexOf("case 'EXPORT_SESSION_HISTORY'"), serviceWorker.indexOf("case 'PREFLIGHT_CHECK'"));
+  assert.doesNotMatch(exportCase, /addAttempt|updateWorkspaceState|updateWorkspace\b|saveSettings|importBanks|createBank|createWorkspace/, 'export handler must not write any store');
+  // UI: localized button + localized notices + validation via the domain guard.
+  assert.match(uiSource, /t\('sessions\.export'\)/);
+  assert.match(uiSource, /t\('sessions\.exported', \{ count: result\.sessions\.length \}\)/);
+  assert.match(uiSource, /isSessionHistoryExportEnvelope\(result\)/);
+  assert.match(uiSource, /x-pilot-sessions-\$\{Date\.now\(\)\}\.json/);
+});
+
 test('Header renders the session status exactly once and pagination has no dead code', () => {
   const headerStart = uiSource.indexOf('<div className="header-status">');
   const headerEnd = uiSource.indexOf('</header>', headerStart);

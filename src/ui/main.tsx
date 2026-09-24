@@ -18,6 +18,8 @@ import { PublishingWindowsEditor } from './components/publishing-windows-editor'
 import type { TabId } from './types/navigation';
 import { CurrentTweetCard, RecoveryCard, PreflightCard, DryRunCard } from './components/operation-cards';
 import { getPageCount, pageRange, paginate, type PageSize } from '../domain/pagination';
+import { loadSavedFilters, queueSavedFilterSave, type SavedFilterView } from './services/saved-filters';
+import { isSessionHistoryExportEnvelope } from '../domain/session-export.ts';
 import { formatDateTime, useI18n } from '../i18n';
 import './styles.css';
 
@@ -73,6 +75,18 @@ function App() {
     ].filter(Boolean);
     return copyText(lines.join('\n'));
   };
+  const exportSessionHistory = async () => {
+    const result = await send({ type: 'EXPORT_SESSION_HISTORY', workspaceId: meta?.activeWorkspaceId });
+    if (!result || result.error || !isSessionHistoryExportEnvelope(result)) return setNotice(t('sessions.exportFailed'));
+    const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `x-pilot-sessions-${Date.now()}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setNotice(t('sessions.exported', { count: result.sessions.length }));
+  };
   const session = state.session;
   const published = useMemo(() => state.queue.filter((item) => item.status === 'PUBLISHED' || item.status === 'PUBLISHED_UNVERIFIED').length, [state.queue]);
   const failed = useMemo(() => state.queue.filter((item) => item.status === 'FAILED').length, [state.queue]);
@@ -96,6 +110,33 @@ function App() {
   useEffect(() => { const workspaceId = meta?.activeWorkspaceId; if (!workspaceId || filtersInitializedFor.current === workspaceId) return; filtersInitializedFor.current = workspaceId; const initialize = (current: SearchFilters) => ({ ...emptySearchFilters, ...current, workspaceId }); setQueueFilters(initialize); setBankFilters(initialize); setSessionFilters(initialize); setHistoryFilters(initialize); }, [meta?.activeWorkspaceId]);
   useEffect(() => { if (meta?.activeWorkspaceId) void refreshBanks(); }, [meta?.activeWorkspaceId]);
   useEffect(() => { setQueuePage(1); }, [queueFilters]);
+  // Restore the last-used filters once per panel session (UI preferences only).
+  const filtersRestoredRef = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    void loadSavedFilters().then((saved) => {
+      if (cancelled) return;
+      const activeId = filtersInitializedFor.current;
+      const apply = (view: SavedFilterView) => { const restored = saved[view]; return restored ? { ...emptySearchFilters, ...restored, workspaceId: restored.workspaceId || activeId } : undefined; };
+      const restoredQueue = apply('queue'); if (restoredQueue) setQueueFilters(restoredQueue);
+      const restoredBanks = apply('banks'); if (restoredBanks) setBankFilters(restoredBanks);
+      const restoredSessions = apply('sessions'); if (restoredSessions) setSessionFilters(restoredSessions);
+      const restoredHistory = apply('history'); if (restoredHistory) setHistoryFilters(restoredHistory);
+      filtersRestoredRef.current = true;
+    });
+    return () => { cancelled = true; };
+  }, []);
+  // Persist the latest filters per view (debounced, best-effort, init-only guard).
+  useEffect(() => {
+    if (!filtersRestoredRef.current) return;
+    const timer = window.setTimeout(() => {
+      void queueSavedFilterSave('queue', queueFilters);
+      void queueSavedFilterSave('banks', bankFilters);
+      void queueSavedFilterSave('sessions', sessionFilters);
+      void queueSavedFilterSave('history', historyFilters);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [queueFilters, bankFilters, sessionFilters, historyFilters]);
   useEffect(() => { const timer = window.setInterval(() => void refreshRuntimeStatus(), 1500); return () => window.clearInterval(timer); }, []);
   useEffect(() => { const timer = window.setInterval(() => setNowMs(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
   useEffect(() => { if (!notice || noticeKind === 'error') return; const timer = window.setTimeout(() => setNoticeState(''), 3500); return () => window.clearTimeout(timer); }, [notice, noticeKind]);
@@ -208,7 +249,7 @@ function App() {
     </section>}
 
     {activeTab === 'sessions' && <section className="tab-panel activity-panel" role="tabpanel" aria-label={t('nav.sessions')}>
-      <section className="card"><div className="section-heading"><div><span className="eyebrow">{t('sessions.eyebrow')}</span><h2>{t('sessions.title')}</h2></div><button onClick={() => void refreshHistory()}>{t('actions.refresh')}</button></div><SearchToolbar filters={sessionFilters} onChange={setSessionFilters} workspaces={workspaces} showStatus sessionOptions={visibleSessions} activeWorkspaceId={currentWorkspaceId} /><div className="search-count">{t('sessions.count', { visible: visibleSessions.length, total: searchData.sessions.length || sessionHistory.length })}</div></section>
+      <section className="card"><div className="section-heading"><div><span className="eyebrow">{t('sessions.eyebrow')}</span><h2>{t('sessions.title')}</h2></div><button onClick={() => void exportSessionHistory()}>{t('sessions.export')}</button><button onClick={() => void refreshHistory()}>{t('actions.refresh')}</button></div><SearchToolbar filters={sessionFilters} onChange={setSessionFilters} workspaces={workspaces} showStatus sessionOptions={visibleSessions} activeWorkspaceId={currentWorkspaceId} /><div className="search-count">{t('sessions.count', { visible: visibleSessions.length, total: searchData.sessions.length || sessionHistory.length })}</div></section>
       <section className="card activity-list">{visibleSessions.map((record) => { const attempts = filterHistory(searchData.history, sessionFilters, currentWorkspaceId).filter((attempt) => attempt.sessionId === record.id); const duration = record.completedAt && record.startedAt ? Math.max(0, record.completedAt - record.startedAt) : undefined; return <article className="session-summary" key={record.id}><div className="session-summary-header"><div><strong>{formatDateTime(record.startedAt)}</strong><small>{t('statuses.' + record.status)} · {record.totalItems} {t('units.items')}</small><small dir="ltr">Session: {record.id}</small></div><div className="history-counts"><span>✓ {record.publishedCount}</span><span>! {record.failedCount}</span><span>↷ {record.skippedCount}</span></div><button className="link-action" onClick={() => copySessionSummary(record, attempts.length, duration)}>{t('sessions.copySummary')}</button></div><div className="session-summary-meta"><span>{t('sessions.started')}: {formatDateTime(record.startedAt)}</span><span>{t('sessions.ended')}: {record.completedAt ? formatDateTime(record.completedAt) : t('sessions.notEnded')}</span><span>{t('sessions.duration')}: {duration === undefined ? '—' : String(Math.round(duration / 1000)) + ' ' + t('units.seconds')}</span><span>{t('common.attempts')}: {attempts.length}</span></div><div className="session-attempts"><h3>{t('history.title')}</h3>{attempts.map((attempt) => <div className="history-row" key={attempt.id}><div><strong>{formatDateTime(attempt.timestamp)}</strong><small>{t('statuses.' + attempt.result)} · {attempt.action} · {t('ui.currentItem')} {attempt.queueItemId}</small><small>{t('common.attempts')}: {attempt.attemptNumber}</small>{(attempt.sourceUrl ?? attempt.link) && <a className="secondary-link" href={attempt.sourceUrl ?? attempt.link} target="_blank" rel="noreferrer">{t('sessions.sourceLink')}</a>}{attempt.publishedPostUrl ? <a className="primary-link" href={attempt.publishedPostUrl} target="_blank" rel="noreferrer">{t('sessions.publishedLink')}</a> : attempt.result === 'PUBLISHED' || attempt.result === 'PUBLISHED_UNVERIFIED' ? <small className="muted">{t('sessions.publishedLinkUnavailable')}</small> : null}{attempt.publishedPostUrl && <button className="link-action" onClick={() => void copyText(attempt.publishedPostUrl!)}>{t('history.copyLink')}</button>}{attempt.error && <small className="error-text">{getUserFacingMessage(attempt.error)}</small>}</div></div>)}{!attempts.length && <p className="muted">{t('history.noMatch')}</p>}</div></article>; })}{!visibleSessions.length && <p className="muted">{t('sessions.noMatch')}</p>}</section>
     </section>}
 
