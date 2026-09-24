@@ -320,6 +320,15 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 @media (max-width: 480px) { .recovery-actions { grid-template-columns: 1fr; } }
 @media (prefers-color-scheme: dark) { .recovery-card { border-color: #34517a; } }
 
+.missed-card { border-color: #e8cf9a; background: linear-gradient(135deg, var(--color-warning-bg), var(--color-surface) 65%); }
+.missed-card::after { background: linear-gradient(180deg, var(--color-warning), transparent 85%); }
+.missed-badge { display: inline-flex; align-items: center; gap: 5px; margin-inline-start: auto; padding: 3px 9px; border: 1px solid #e2c37e; border-radius: 999px; background: var(--color-warning-bg); color: var(--color-warning); font-size: 10px; font-weight: 800; white-space: nowrap; }
+.missed-badge::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--color-warning); animation: missed-pulse 1.6s ease-in-out infinite; }
+.missed-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@keyframes missed-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(.82); } }
+@media (prefers-reduced-motion: reduce) { .missed-badge::before { animation: none; } }
+@media (prefers-color-scheme: dark) { .missed-card { border-color: #6b5524; } .missed-badge { border-color: #6b5524; } }
+
 .history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--color-border-subtle); }
 .history-row:last-child { border-bottom: 0; }
 .history-row small { display: block; margin-top: 3px; color: var(--color-text-3); }
