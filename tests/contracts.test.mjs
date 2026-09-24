@@ -716,6 +716,22 @@ test('UI clipboard actions, workspace color dot, and analytics donut are localiz
   assert.doesNotMatch(analyticsTab, /toLocaleString\('ar'\)/);
 });
 
+test('Dark theme overrides every hardcoded light surface', () => {
+  const styles = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
+  // The component overrides live in the LAST dark block (placed after the light
+  // base rules so they win the cascade); extract exactly that block.
+  const darkStart = styles.lastIndexOf('@media (prefers-color-scheme: dark)');
+  const darkBlock = styles.slice(darkStart, styles.indexOf('\n}', darkStart) + 2);
+  // Every previously light-only component must have a dark override.
+  for (const selector of ['.running-workspace', '.operation-hero', '.dashboard-countdown', '.notice-info', '.notice-error', '.empty-icon', '.session-summary:hover', '.bank-card.selected']) {
+    assert.match(darkBlock, new RegExp(selector.replace(/[.]/g, '\\.')), `dark theme must override ${selector}`);
+  }
+  // Chart tooltips must be locale-formatted, not raw ISO dates.
+  const analyticsTab = fs.readFileSync(path.join(root, 'src/ui/tabs/AnalyticsTab.tsx'), 'utf8');
+  assert.match(analyticsTab, /title=\{`\$\{formatDate\(point\.date\)\}/);
+  assert.doesNotMatch(analyticsTab, /title=\{`\$\{point\.date\}: /);
+});
+
 test('Header renders the session status exactly once and pagination has no dead code', () => {
   const headerStart = uiSource.indexOf('<div className="header-status">');
   const headerEnd = uiSource.indexOf('</header>', headerStart);
