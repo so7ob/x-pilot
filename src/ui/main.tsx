@@ -18,6 +18,7 @@ import { PublishingWindowsEditor } from './components/publishing-windows-editor'
 import type { TabId } from './types/navigation';
 import { CurrentTweetCard, RecoveryCard, PreflightCard, DryRunCard } from './components/operation-cards';
 import { getPageCount, pageRange, paginate, type PageSize } from '../domain/pagination';
+import { loadSavedFilters, queueSavedFilterSave, type SavedFilterView } from './services/saved-filters';
 import { formatDateTime, useI18n } from '../i18n';
 import './styles.css';
 
@@ -96,6 +97,33 @@ function App() {
   useEffect(() => { const workspaceId = meta?.activeWorkspaceId; if (!workspaceId || filtersInitializedFor.current === workspaceId) return; filtersInitializedFor.current = workspaceId; const initialize = (current: SearchFilters) => ({ ...emptySearchFilters, ...current, workspaceId }); setQueueFilters(initialize); setBankFilters(initialize); setSessionFilters(initialize); setHistoryFilters(initialize); }, [meta?.activeWorkspaceId]);
   useEffect(() => { if (meta?.activeWorkspaceId) void refreshBanks(); }, [meta?.activeWorkspaceId]);
   useEffect(() => { setQueuePage(1); }, [queueFilters]);
+  // Restore the last-used filters once per panel session (UI preferences only).
+  const filtersRestoredRef = useRef(false);
+  useEffect(() => {
+    let cancelled = false;
+    void loadSavedFilters().then((saved) => {
+      if (cancelled) return;
+      const activeId = filtersInitializedFor.current;
+      const apply = (view: SavedFilterView) => { const restored = saved[view]; return restored ? { ...emptySearchFilters, ...restored, workspaceId: restored.workspaceId || activeId } : undefined; };
+      const restoredQueue = apply('queue'); if (restoredQueue) setQueueFilters(restoredQueue);
+      const restoredBanks = apply('banks'); if (restoredBanks) setBankFilters(restoredBanks);
+      const restoredSessions = apply('sessions'); if (restoredSessions) setSessionFilters(restoredSessions);
+      const restoredHistory = apply('history'); if (restoredHistory) setHistoryFilters(restoredHistory);
+      filtersRestoredRef.current = true;
+    });
+    return () => { cancelled = true; };
+  }, []);
+  // Persist the latest filters per view (debounced, best-effort, init-only guard).
+  useEffect(() => {
+    if (!filtersRestoredRef.current) return;
+    const timer = window.setTimeout(() => {
+      void queueSavedFilterSave('queue', queueFilters);
+      void queueSavedFilterSave('banks', bankFilters);
+      void queueSavedFilterSave('sessions', sessionFilters);
+      void queueSavedFilterSave('history', historyFilters);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [queueFilters, bankFilters, sessionFilters, historyFilters]);
   useEffect(() => { const timer = window.setInterval(() => void refreshRuntimeStatus(), 1500); return () => window.clearInterval(timer); }, []);
   useEffect(() => { const timer = window.setInterval(() => setNowMs(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
   useEffect(() => { if (!notice || noticeKind === 'error') return; const timer = window.setTimeout(() => setNoticeState(''), 3500); return () => window.clearTimeout(timer); }, [notice, noticeKind]);

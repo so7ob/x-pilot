@@ -732,6 +732,23 @@ test('Dark theme overrides every hardcoded light surface', () => {
   assert.doesNotMatch(analyticsTab, /title=\{`\$\{point\.date\}: /);
 });
 
+test('Saved search filters stay UI-only and restore is init-only', () => {
+  const helper = fs.readFileSync(path.join(root, 'src/ui/services/saved-filters.ts'), 'utf8');
+  // Dedicated preference key, isolated from every entity store.
+  assert.match(helper, /xPilotSavedFilters/);
+  for (const banned of ['queue:', 'session:', 'workspaces:', 'xPilotMeta', 'historical']) {
+    assert.doesNotMatch(helper, new RegExp(`chrome\\.storage\\.local\\.set\\(\\{\\s*\\[?['"]?${banned}`), 'helper must never write entity stores');
+  }
+  assert.doesNotMatch(helper, /storage-repository/, 'helper must not import the storage repository');
+  // Restore happens once per panel session; persistence is debounced after restore.
+  assert.match(uiSource, /filtersRestoredRef/);
+  assert.match(uiSource, /loadSavedFilters/);
+  assert.match(uiSource, /queueSavedFilterSave\('queue', queueFilters\)/);
+  assert.match(uiSource, /queueSavedFilterSave\('history', historyFilters\)/);
+  // Restore must pin an explicit saved workspace filter, or fall back to the active workspace.
+  assert.match(uiSource, /restored\.workspaceId \|\| activeId/);
+});
+
 test('Header renders the session status exactly once and pagination has no dead code', () => {
   const headerStart = uiSource.indexOf('<div className="header-status">');
   const headerEnd = uiSource.indexOf('</header>', headerStart);
