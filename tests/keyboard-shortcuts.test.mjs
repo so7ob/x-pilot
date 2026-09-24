@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isEditableTarget, isSlashFocusShortcut, isSearchFocusShortcut, isSearchFocusEvent } from '../src/ui/services/keyboard.ts';
+import { isEditableTarget, isSlashFocusShortcut, isSearchFocusShortcut, isSearchFocusEvent, isPaletteShortcut } from '../src/ui/services/keyboard.ts';
 
 function event(patch = {}) {
   return { key: '', ctrlKey: false, metaKey: false, altKey: false, target: null, ...patch };
@@ -63,4 +63,14 @@ test('keyboard helper is pure: no chrome namespace usage', async () => {
   assert.ok(!text.includes('chrome.'), 'keyboard.ts must not reference chrome APIs');
   assert.ok(!text.includes('document.'), 'keyboard.ts must stay DOM-query-free (policy only)');
   assert.ok(!text.includes('storage-repository'), 'keyboard.ts must not import storage');
+});
+
+test('Ctrl/Cmd+K is the palette shortcut from ANY target, including editable ones', () => {
+  assert.equal(isPaletteShortcut(event({ key: 'k', ctrlKey: true, target: bodyTarget })), true);
+  assert.equal(isPaletteShortcut(event({ key: 'K', metaKey: true, target: buttonTarget })), true);
+  assert.equal(isPaletteShortcut(event({ key: 'k', ctrlKey: true, target: inputTarget })), true, 'palette must open even while typing in the search field');
+  assert.equal(isPaletteShortcut(event({ key: 'k', ctrlKey: true, target: contentEditable })), true);
+  assert.equal(isPaletteShortcut(event({ key: 'k', target: bodyTarget })), false, 'plain k stays free');
+  assert.equal(isPaletteShortcut(event({ key: 'k', altKey: true, target: bodyTarget })), false);
+  assert.equal(isPaletteShortcut(event({ key: 'b', ctrlKey: true, target: bodyTarget })), false);
 });

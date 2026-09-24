@@ -17,10 +17,12 @@ import { StartupTestsTab } from './tabs/StartupTestsTab';
 import { PublishingWindowsEditor } from './components/publishing-windows-editor';
 import type { TabId } from './types/navigation';
 import { CurrentTweetCard, RecoveryCard, PreflightCard, DryRunCard } from './components/operation-cards';
+import { CommandPalette } from './components/command-palette';
+import { buildPaletteCommands, type PaletteCommand } from './services/command-palette';
 import { getPageCount, pageRange, paginate, type PageSize } from '../domain/pagination';
 import { loadSavedFilters, queueSavedFilterSave, type SavedFilterView } from './services/saved-filters';
 import { loadFilterPresets, saveFilterPreset, deleteFilterPreset, presetsForView, hasFilterSelection, normalizePresetName, MAX_FILTER_PRESET_NAME_LENGTH, type FilterPreset, type FilterPresetView } from './services/filter-presets';
-import { isSearchFocusEvent } from './services/keyboard';
+import { isSearchFocusEvent, isPaletteShortcut } from './services/keyboard';
 import { isSessionHistoryExportEnvelope } from '../domain/session-export.ts';
 import { buildAnalyticsCsv } from '../domain/analytics-export';
 import { formatDateTime, useI18n } from '../i18n';
@@ -28,6 +30,37 @@ import './styles.css';
 
 const initialState: AppState = { queue: [], session: null, history: [] };
 const initialRuntimeStatus: RuntimeStatus = { engineStatus: 'IDLE', connection: 'NOT_REQUIRED', checkedAt: 0 };
+
+/** Focuses the visible view's search input (shared by shortcuts and the palette). */
+function focusVisibleSearch(): void {
+  const visible = [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input.search-input')].find((input) => input.offsetParent !== null);
+  if (!visible) return;
+  visible.focus();
+  visible.select();
+}
+
+function splitKeywords(value: string): string[] { return value.split(/\s+/).filter(Boolean); }
+
+/** Locale search aliases for palette commands, sourced from the i18n dictionaries. */
+function paletteKeywordAliases(t: (path: string) => string): Record<string, string[]> {
+  return {
+    workspace: splitKeywords(t('paletteKeywords.workspace')),
+    'tab:operation': splitKeywords(t('paletteKeywords.tab_operation')),
+    'tab:tests': splitKeywords(t('paletteKeywords.tab_tests')),
+    'tab:queue': splitKeywords(t('paletteKeywords.tab_queue')),
+    'tab:sessions': splitKeywords(t('paletteKeywords.tab_sessions')),
+    'tab:analytics': splitKeywords(t('paletteKeywords.tab_analytics')),
+    'tab:diagnostics': splitKeywords(t('paletteKeywords.tab_diagnostics')),
+    'tab:workspaces': splitKeywords(t('paletteKeywords.tab_workspaces')),
+    'tab:settings': splitKeywords(t('paletteKeywords.tab_settings')),
+    'action:focus-search': splitKeywords(t('paletteKeywords.action_focus_search')),
+    'action:clear-filters': splitKeywords(t('paletteKeywords.action_clear_filters')),
+    'action:refresh-data': splitKeywords(t('paletteKeywords.action_refresh_data')),
+    'action:export-backup': splitKeywords(t('paletteKeywords.action_export_backup')),
+    'action:export-analytics-csv': splitKeywords(t('paletteKeywords.action_export_analytics_csv')),
+    'action:new-workspace': splitKeywords(t('paletteKeywords.action_new_workspace')),
+  };
+}
 
 function App() {
   const { t, language, setLanguage } = useI18n();
@@ -39,6 +72,7 @@ function App() {
   const [noticeKind, setNoticeKind] = useState<'info' | 'error'>('info');
   const [nowMs, setNowMs] = useState(Date.now());
   const [activeTab, setActiveTab] = useState<TabId>('operation');
+  const [paletteOpen, setPaletteOpen] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>(initialRuntimeStatus);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [meta, setMeta] = useState<AppMetaState | null>(null);
@@ -159,15 +193,17 @@ function App() {
   const refreshHistory = async () => { const next = await send({ type: 'GET_SESSION_HISTORY', workspaceId: meta?.activeWorkspaceId }); if (next?.sessions) setSessionHistory(next.sessions); };
   const refreshDryRun = async () => { const next = await send({ type: 'GET_DRY_RUN' }); if (next && !next.error) setDryRun(next); };
   useEffect(() => { void refresh(); void refreshWorkspaces(); void refreshBanks(); void refreshRuntimeStatus(); void refreshDryRun(); const listener = (message: any) => { if (message.type === 'STATE_UPDATED') { setState(message.state); void refreshWorkspaces(); void refreshBanks(); void refreshRuntimeStatus(); void refreshHistory(); void refreshDryRun(); } }; chrome.runtime.onMessage.addListener(listener); return () => chrome.runtime.onMessage.removeListener(listener); }, []);
-  // Keyboard shortcuts: "/" and Ctrl/Cmd+K focus the visible search input.
+  // Keyboard shortcuts: "/" focuses the visible search input; Ctrl/Cmd+K opens the command palette (from anywhere, even inside the search field).
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isPaletteShortcut(event)) {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+        return;
+      }
       if (!isSearchFocusEvent(event)) return;
-      const visible = [...document.querySelectorAll<HTMLTextAreaElement | HTMLInputElement>('input.search-input')].find((input) => input.offsetParent !== null);
-      if (!visible) return;
       event.preventDefault();
-      visible.focus();
-      visible.select();
+      focusVisibleSearch();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -289,9 +325,58 @@ function App() {
   const workspaceAnalytics = selectedAnalytics ? calculateWorkspaceAnalytics(selectedAnalytics) : undefined;
   const allWorkspaceAnalytics = workspaceStates.map(calculateWorkspaceAnalytics);
 
+  // Command palette: navigation + SAFE actions only (never publishing).
+  const viewHasSearch = activeTab === 'queue' || activeTab === 'sessions';
+  const paletteCommands = useMemo(() => buildPaletteCommands({
+    tabs: [
+      { id: 'operation', label: t('nav.operation'), icon: 'play' },
+      { id: 'tests', label: t('nav.startupTests'), icon: 'check' },
+      { id: 'queue', label: t('nav.banks'), icon: 'bank' },
+      { id: 'sessions', label: t('nav.sessions'), icon: 'clock' },
+      { id: 'analytics', label: t('nav.analytics'), icon: 'analytics' },
+      { id: 'diagnostics', label: t('nav.diagnostics'), icon: 'diagnostics' },
+      { id: 'workspaces', label: t('nav.workspaces'), icon: 'workspace' },
+      { id: 'settings', label: t('nav.settings'), icon: 'settings' },
+    ],
+    workspaces: workspaces.filter((workspace) => !workspace.archived).map((workspace) => ({ id: workspace.id, name: workspace.name, active: workspace.id === meta?.activeWorkspaceId })),
+    activeWorkspaceId: meta?.activeWorkspaceId,
+    aliases: paletteKeywordAliases(t),
+    actions: [
+      ...(viewHasSearch ? [{ id: 'focus-search' as const, label: t('palette.actionFocusSearch'), icon: 'search', hint: '/' }, { id: 'clear-filters' as const, label: t('palette.actionClearFilters'), icon: 'filter' }] : []),
+      { id: 'refresh-data' as const, label: t('palette.actionRefreshData'), icon: 'refresh' },
+      ...(activeTab === 'analytics' ? [{ id: 'export-analytics-csv' as const, label: t('analytics.exportCsv'), icon: 'download' }] : []),
+      { id: 'export-backup' as const, label: t('backup.export'), icon: 'download' },
+      { id: 'new-workspace' as const, label: t('workspaces.new'), icon: 'workspace' },
+    ],
+  }), [t, workspaces, meta?.activeWorkspaceId, activeTab, viewHasSearch]);
+
+  const refreshAllData = async () => { await Promise.all([refresh(), refreshWorkspaces(), refreshBanks(), refreshHistory(), refreshRuntimeStatus()]); };
+
+  const runPaletteCommand = (command: PaletteCommand) => {
+    setPaletteOpen(false);
+    if (command.kind === 'tab' && command.value) { setActiveTab(command.value as TabId); return; }
+    if (command.kind === 'workspace' && command.value) { void switchWorkspace(command.value); return; }
+    if (command.kind !== 'action') return;
+    switch (command.value) {
+      case 'focus-search': window.setTimeout(focusVisibleSearch, 0); return;
+      case 'clear-filters': {
+        const reset = { ...emptySearchFilters, workspaceId: meta?.activeWorkspaceId ?? '' };
+        if (activeTab === 'queue') { setQueueFilters(reset); setBankFilters(reset); }
+        if (activeTab === 'sessions') { setSessionFilters(reset); setHistoryFilters(reset); }
+        setNotice(t('palette.filtersCleared'));
+        return;
+      }
+      case 'refresh-data': void refreshAllData().then(() => setNotice(t('palette.dataRefreshed'))); return;
+      case 'export-backup': void exportFullBackup(); return;
+      case 'export-analytics-csv': exportAnalyticsCsv(); return;
+      case 'new-workspace': void createNewWorkspace(); return;
+      default: return;
+    }
+  };
+
   const progress = state.queue.length ? (published / state.queue.length) * 100 : 0;
   return <main className={`shell shell-${activeTab}`}>
-    <header className="app-header"><div className="brand-lockup"><img className="brand-logo" src={logoUrl} alt="X-Pilot" /><div><span className="eyebrow">{t('common.localFirst')} · MV3</span><h1>X-PILOT</h1><p>{t('operation.publishingCenter')}</p></div></div><div className="header-status"><span className="header-live-dot" aria-hidden="true" /><StatusBadge status={session?.status ?? 'IDLE'}>{t(`statuses.${session?.status ?? 'IDLE'}`)}</StatusBadge></div></header>
+    <header className="app-header"><div className="brand-lockup"><img className="brand-logo" src={logoUrl} alt="X-Pilot" /><div><span className="eyebrow">{t('common.localFirst')} · MV3</span><h1>X-PILOT</h1><p>{t('operation.publishingCenter')}</p></div></div><div className="header-status"><button type="button" className="palette-trigger" onClick={() => setPaletteOpen(true)} aria-haspopup="dialog" aria-expanded={paletteOpen} aria-label={t('palette.title')} title={t('palette.title')}><Icon name="command" size={14} /><kbd>Ctrl</kbd><kbd>K</kbd></button><span className="header-live-dot" aria-hidden="true" /><StatusBadge status={session?.status ?? 'IDLE'}>{t(`statuses.${session?.status ?? 'IDLE'}`)}</StatusBadge></div></header>
     <div className="workspace-switcher premium-switcher"><div className="workspace-switcher-copy"><span className="eyebrow">{t('ui.workspaceActive')}</span>{activeWorkspace?.color && <span className="workspace-color-dot" style={{ background: activeWorkspace.color }} aria-hidden="true" />}<strong dir="auto">{activeWorkspace?.name ?? t('ui.chooseWorkspace')}</strong></div><select value={meta?.activeWorkspaceId ?? ''} onChange={(event) => void switchWorkspace(event.target.value)} aria-label={t('ui.activeWorkspace')}>{workspaces.filter((workspace) => !workspace.archived).map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.favorite ? '★ ' : ''}{workspace.name}</option>)}</select><button className="icon-button workspace-manage-button" onClick={() => setActiveTab('workspaces')} aria-label={t('ui.manageWorkspaces')} title={t('ui.manageWorkspaces')}><Icon name="workspace" /></button></div>
     <nav className="tabs-bar" aria-label={t('nav.operation')} data-scroll-hint={t('ui.scrollTabsHint')}><div className="tabs" role="tablist">
       <div className="nav-group"><span>{t('common.control')}</span><TabButton id="operation" activeTab={activeTab} onSelect={setActiveTab} icon="play" label={t('nav.operation')} /><TabButton id="tests" activeTab={activeTab} onSelect={setActiveTab} icon="check" label={t('nav.startupTests')} /></div>
@@ -331,6 +416,8 @@ function App() {
     {activeTab === 'settings' && <section className="tab-panel" role="tabpanel" aria-label={t('nav.settings')}>
       <section className="card settings-card"><div className="settings-heading"><img src={logoUrl} alt="" /><div><span className="eyebrow">{t('common.xPilotSettings')}</span><h2>{t('settings.title')}</h2></div></div><label>{t('settings.language')}<select value={language} onChange={(event) => void setLanguage(event.target.value as 'AUTO' | 'AR' | 'EN')}><option value="AUTO">{t('common.automatic')}</option><option value="AR">{t('common.arabic')}</option><option value="EN">{t('common.english')}</option></select></label><label>{t('settings.interval')}<input type="number" min="0.5" step="0.5" value={settings.intervalMinutes} onChange={(event) => void updateSettings({ ...settings, intervalMinutes: Number(event.target.value) })} /></label><label>{t('settings.maxRetries')}<input type="number" min="0" max="10" value={settings.maxRetries} onChange={(event) => void updateSettings({ ...settings, maxRetries: Number(event.target.value) })} /></label><label>{t('settings.timezone')}<input value={settings.timezone} onChange={(event) => void updateSettings({ ...settings, timezone: event.target.value })} placeholder="Asia/Aden" dir="ltr" /></label><PublishingWindowsEditor windows={settings.publishingWindows} onSave={(publishingWindows) => void updateSettings({ ...settings, publishingWindows })} /><label>{t('settings.duplicatePolicy')}<select value={settings.duplicatePolicy} onChange={(event) => void updateSettings({ ...settings, duplicatePolicy: event.target.value as Settings['duplicatePolicy'] })}><option value="BLOCK">{t('duplicatePolicy.BLOCK')}</option><option value="WARN">{t('duplicatePolicy.WARN')}</option><option value="ALLOW">{t('duplicatePolicy.ALLOW')}</option></select></label><label>{t('settings.badge')}<select value={settings.badgeMode} onChange={(event) => void updateSettings({ ...settings, badgeMode: event.target.value as Settings['badgeMode'] })}><option value="COUNT">{t('badges.remaining')}</option><option value="STATUS">{t('common.status')}</option><option value="NONE">{t('common.none')}</option></select></label><label className="check"><input type="checkbox" checked={settings.notificationsEnabled} onChange={(event) => void updateSettings({ ...settings, notificationsEnabled: event.target.checked })} /> {t('settings.notifications')}</label><label className="check"><input type="checkbox" checked={settings.confirmBeforeStart} onChange={(event) => void updateSettings({ ...settings, confirmBeforeStart: event.target.checked })} /> {t('settings.confirmBeforeStart')}</label><label className="check"><input type="checkbox" checked={settings.keepAutomationTabOpen} onChange={(event) => void updateSettings({ ...settings, keepAutomationTabOpen: event.target.checked })} /> {t('settings.keepAutomationTabOpen')}</label><label className="check"><input type="checkbox" checked={settings.closeTabOnComplete} onChange={(event) => void updateSettings({ ...settings, closeTabOnComplete: event.target.checked })} /> {t('settings.closeTabOnComplete')}</label><div className="profile-actions"><h3>{t('settings.profileTitle')}</h3><p className="muted">{t('settings.profileHint')}</p><button onClick={() => void saveWorkspaceProfile()}>{t('settings.workspaceOverride')}</button><button onClick={() => void clearWorkspaceProfile()}>{t('settings.clearOverride')}</button></div><div className="backup-actions"><h3>{t('backup.title')}</h3><p className="muted">{t('backup.hint')}</p><div className="row controls-row"><button className="primary" onClick={() => void exportFullBackup()}>{t('backup.export')}</button><label className="button-like">{t('backup.restore')}<input type="file" accept="application/json,.json" onChange={(event) => void restoreFullBackup(event)} /></label></div></div></section>
     </section>}
+
+    <CommandPalette open={paletteOpen} commands={paletteCommands} groupLabels={{ tab: t('palette.groupTabs'), action: t('palette.groupActions'), workspace: t('palette.groupWorkspaces') }} placeholder={t('palette.placeholder')} emptyLabel={t('palette.empty')} footerHints={{ navigate: t('palette.hintNavigate'), run: t('palette.hintRun'), close: t('palette.hintClose') }} onRun={runPaletteCommand} onClose={() => setPaletteOpen(false)} />
   </main>;
 }
 

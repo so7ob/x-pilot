@@ -3,11 +3,12 @@
  *
  * Shortcuts:
  * - `/` focuses the visible view's search input.
- * - Ctrl/Cmd+K focuses the search input from anywhere.
+ * - Ctrl/Cmd+K opens the command palette from anywhere — INCLUDING while
+ *   typing in a search field ("the palette lives above the search field").
  * - Escape inside the search input clears the query text (component side).
  *
- * The helpers never fire while the user is typing in an editable target:
- * pressing `/` inside a text field must insert a slash, not move focus.
+ * The helpers never let `/` fire while the user is typing in an editable
+ * target: pressing `/` inside a text field must insert a slash, not move focus.
  */
 
 export type ShortcutEventLike = {
@@ -30,6 +31,13 @@ export function isSlashFocusShortcut(event: ShortcutEventLike): boolean {
   if (event.key !== '/') return false;
   if (event.ctrlKey || event.metaKey || event.altKey) return false;
   return !isEditableTarget(event.target);
+}
+
+/** Ctrl+K / Cmd+K — palette shortcut, allowed from ANY target (even editable). */
+export function isPaletteShortcut(event: ShortcutEventLike): boolean {
+  if (event.key !== 'k' && event.key !== 'K') return false;
+  if (event.altKey) return false;
+  return event.ctrlKey || event.metaKey;
 }
 
 /** Ctrl+K / Cmd+K — allowed from non-editable targets. */
