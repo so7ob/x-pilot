@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasFutureRecoveryAlarm, normalizeRecovery } from '../src/domain/recovery.ts';
+import { hasFutureRecoveryAlarm, normalizeRecovery, buildStartOverQueue, countStartOverResets } from '../src/domain/recovery.ts';
 
 const item = (id, position, status) => ({
   id,
@@ -61,4 +61,48 @@ test('published items are never re-queued during recovery', () => {
   const recovered = normalizeRecovery(state, 100);
   assert.equal(recovered.queue[0].status, 'PUBLISHED');
   assert.equal(recovered.session.status, 'COMPLETED');
+});
+
+test('start over resets failed and interrupted items to a clean pending state', () => {
+  const now = 5_000;
+  const failed = { ...item('failed', 1, 'FAILED'), attempts: 3, lastError: 'SOME_ERROR', publishIntentId: 'intent-1', publishStartedAt: 10, publishSubmittedAt: 11, publishedAt: 12 };
+  const opening = { ...item('opening', 2, 'OPENING'), operationId: 'stale-operation' };
+  const ready = item('ready', 3, 'READY');
+  const queue = buildStartOverQueue([failed, opening, ready], now);
+  for (const reset of queue) {
+    assert.equal(reset.status, 'PENDING');
+    assert.equal(reset.attempts, 0);
+    assert.equal(reset.lastError, undefined);
+    assert.equal(reset.operationId, undefined);
+    assert.equal(reset.publishIntentId, undefined);
+    assert.equal(reset.updatedAt, now);
+  }
+  assert.equal(countStartOverResets([failed, opening, ready]), 3);
+});
+
+test('start over never re-queues published, unverified, or skipped items', () => {
+  const now = 5_000;
+  const published = item('published', 1, 'PUBLISHED');
+  const unverified = { ...item('unverified', 2, 'PUBLISHED_UNVERIFIED'), publishedAt: 4_000 };
+  const skipped = item('skipped', 3, 'SKIPPED');
+  const publishing = item('publishing', 4, 'PUBLISHING');
+  const queue = buildStartOverQueue([published, unverified, skipped, publishing], now);
+  assert.equal(queue[0].status, 'PUBLISHED');
+  assert.equal(queue[1].status, 'PUBLISHED_UNVERIFIED');
+  assert.equal(queue[1].publishedAt, 4_000, 'existing unverified publish time is preserved');
+  assert.equal(queue[2].status, 'SKIPPED');
+  assert.equal(queue[3].status, 'PUBLISHED_UNVERIFIED', 'PUBLISHING is converted to PUBLISHED_UNVERIFIED, never PENDING');
+  assert.equal(queue[3].lastError, 'PUBLISH_OUTCOME_UNVERIFIED_AFTER_RESTART');
+  assert.equal(countStartOverResets([published, unverified, skipped, publishing]), 0);
+});
+
+test('start over preserves positions, fingerprints, and duplicate metadata', () => {
+  const now = 5_000;
+  const source = { ...item('keep', 7, 'FAILED'), contentFingerprint: 'fp-7', normalizedContent: 'محتوى', duplicateStatus: 'UNIQUE' };
+  const [reset] = buildStartOverQueue([source], now);
+  assert.equal(reset.position, 7);
+  assert.equal(reset.contentFingerprint, 'fp-7');
+  assert.equal(reset.normalizedContent, 'محتوى');
+  assert.equal(reset.duplicateStatus, 'UNIQUE');
+  assert.equal(reset.targetUrl, source.targetUrl);
 });

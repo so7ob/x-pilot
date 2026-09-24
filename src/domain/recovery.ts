@@ -70,3 +70,51 @@ export function normalizeRecovery(state: AppState, now = Date.now()): AppState {
 export function hasFutureRecoveryAlarm(state: AppState, now = Date.now()): boolean {
   return state.session?.status === 'WAITING' && Boolean(state.session.nextRunAt && state.session.nextRunAt > now);
 }
+
+const resettableStatuses = new Set<QueueItem['status']>(['FAILED', 'OPENING', 'READY']);
+
+function clearPublishTracking(item: QueueItem, now: number): QueueItem {
+  return {
+    ...item,
+    status: 'PENDING',
+    attempts: 0,
+    lastError: undefined,
+    operationId: undefined,
+    publishIntentId: undefined,
+    publishStartedAt: undefined,
+    publishSubmittedAt: undefined,
+    startedAt: undefined,
+    publishedAt: undefined,
+    updatedAt: now,
+  };
+}
+
+/**
+ * Builds the queue for an explicit user-initiated Start Over.
+ * Safety invariants (must never be violated):
+ * - PUBLISHED, PUBLISHED_UNVERIFIED, and SKIPPED items are returned untouched.
+ * - PUBLISHING is converted to PUBLISHED_UNVERIFIED (never re-pending) because
+ *   the publish outcome is unknown.
+ * - FAILED, OPENING, and READY items are reset to PENDING with a clean slate.
+ * - Positions, content fingerprints, and duplicate metadata are preserved.
+ */
+export function buildStartOverQueue(queue: QueueItem[], now = Date.now()): QueueItem[] {
+  return queue.map((item) => {
+    if (resettableStatuses.has(item.status)) return clearPublishTracking(item, now);
+    if (item.status === 'PUBLISHING') {
+      return {
+        ...item,
+        status: 'PUBLISHED_UNVERIFIED',
+        publishedAt: item.publishedAt ?? now,
+        operationId: undefined,
+        lastError: item.lastError ?? 'PUBLISH_OUTCOME_UNVERIFIED_AFTER_RESTART',
+        updatedAt: now,
+      };
+    }
+    return item;
+  });
+}
+
+export function countStartOverResets(queue: QueueItem[]): number {
+  return queue.filter((item) => resettableStatuses.has(item.status)).length;
+}
