@@ -127,6 +127,32 @@ test('v1.13 publish attempts capture the full tweet snapshot analytically', () =
   assert.match(styles, /\.attempt-badge\[data-result='PUBLISHED'\]/);
 });
 
+test('v1.13.1 session log linkage: record id = session id, sync lands, v4 round-trip keeps analytics', () => {
+  // Model: the historical record id defaults to the runtime session id so
+  // attempt rows (sessionId = session.id) always match their record.
+  assert.match(models, /export function createHistoricalSession\(session: AutomationSession, queue: QueueItem\[\], id = session\.id\): HistoricalSession/);
+  // Engine: idempotent record creation by id — never the truthiness guard
+  // that sessionFromRuntime's fabricated historicalSessionId defeated.
+  assert.match(engineSource, /export async function ensureHistoricalSession/);
+  assert.match(engineSource, /existing\.some\(\(record\) => record\.id === state\.session!\.id\)/);
+  assert.equal((engineSource.match(/!state\.session\.historicalSessionId|!running\.session\.historicalSessionId/g) ?? []).length, 0, 'historicalSessionId truthiness guards are forbidden (fabricated after round-trip)');
+  // Engine: repair wiring in recovery for pre-1.13.1 data.
+  assert.match(engineSource, /import \{ buildStartOverQueue, countStartOverResets, hasFutureRecoveryAlarm, normalizeRecovery, repairSessionHistoryLinks \} from '\.\.\/domain\/recovery';/);
+  assert.match(engineSource, /export async function repairHistoricalSessionLinks/);
+  assert.match(engineSource, /const repairedSessionIds = await repairHistoricalSessionLinks\(\);/);
+  // Recovery: conservative pure repair — re-link by renaming, never delete.
+  const recovery = fs.readFileSync(path.join(root, 'src/domain/recovery.ts'), 'utf8');
+  assert.match(recovery, /export function repairSessionHistoryLinks/);
+  assert.match(recovery, /repairedSessionIds/);
+  // Storage: v4 persistence keeps analytical fields and PAUSED results.
+  assert.match(storage, /PERSISTABLE_ATTEMPT_RESULTS = \['PUBLISHED', 'PUBLISHED_UNVERIFIED', 'PENDING', 'FAILED', 'SKIPPED', 'PAUSED'\]/);
+  assert.match(storage, /publishedPostUrl: attempt\.publishedPostUrl/);
+  assert.match(storage, /tweetLabel: attempt\.tweetLabel/);
+  assert.match(storage, /durationMs: attempt\.durationMs/);
+  assert.match(storage, /export function fromV4Attempt/);
+  assert.match(storage, /history: attempts\.map\(\(attempt\) => fromV4Attempt\(attempt, workspaceId\)\)/);
+});
+
 test('operation tab includes current-tweet information and existing controls', () => {
   assert.match(uiSource, /export function CurrentTweetCard/);
   assert.match(uiSource, /CurrentTweetCard/);
