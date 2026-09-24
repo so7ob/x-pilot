@@ -24,7 +24,7 @@ function isSearchFiltersShape(value: unknown): value is SearchFilters {
     && typeof candidate.dateTo === 'string';
 }
 
-function sanitize(saved: unknown): SavedFilters {
+export function sanitizeSavedFilters(saved: unknown): SavedFilters {
   if (!saved || typeof saved !== 'object') return {};
   const views: SavedFilterView[] = ['queue', 'banks', 'sessions', 'history'];
   const source = saved as Record<string, unknown>;
@@ -38,7 +38,7 @@ function sanitize(saved: unknown): SavedFilters {
 export async function loadSavedFilters(): Promise<SavedFilters> {
   try {
     const stored = await globalThis.chrome?.storage?.local?.get(SAVED_FILTERS_KEY) as Record<string, unknown> | undefined;
-    return sanitize(stored?.[SAVED_FILTERS_KEY]);
+    return sanitizeSavedFilters(stored?.[SAVED_FILTERS_KEY]);
   } catch {
     return {};
   }
