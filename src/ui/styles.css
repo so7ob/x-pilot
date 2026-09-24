@@ -311,7 +311,14 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .preflight-fail .preflight-icon { background: #f8d1ce; }
 .preflight-ready { border-color: #acd9bd; }
 .preflight-blocked { border-color: #e3aaa6; }
-.recovery-card { border-color: #c4d8f1; background: var(--color-surface-2); }
+.recovery-card { position: relative; overflow: hidden; border-color: #c4d8f1; background: var(--color-surface-2); }
+.recovery-card::after { content: ''; position: absolute; inset-block: 0; inset-inline-start: 0; width: 3px; background: linear-gradient(180deg, var(--color-primary), transparent 85%); pointer-events: none; }
+.recovery-hint { margin: 8px 0 0; font-size: 11px; line-height: 1.6; }
+.recovery-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.recovery-actions button { position: relative; min-width: 0; }
+.recovery-count { position: absolute; top: -7px; inset-inline-end: -5px; min-width: 17px; height: 17px; display: inline-flex; align-items: center; justify-content: center; padding: 0 4px; border-radius: 9px; background: var(--color-danger); color: #fff; font-size: 10px; font-weight: 800; }
+@media (max-width: 480px) { .recovery-actions { grid-template-columns: 1fr; } }
+@media (prefers-color-scheme: dark) { .recovery-card { border-color: #34517a; } }
 
 .history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--color-border-subtle); }
 .history-row:last-child { border-bottom: 0; }
