@@ -177,7 +177,7 @@ test('Phase 2 exposes persistent scheduling, profiles, notifications, and Badge 
   assert.match(engineSource, /chrome\.alarms\.create\(SCHEDULE_ALARM_NAME/);
   assert.match(engineSource, /getNextAllowedPublishingTime/);
   assert.match(engineSource, /chrome\.notifications\.create/);
-  assert.match(engineSource, /فشل عنصر/);
+  assert.match(engineSource, /ITEM_FAILED: defineEvent\('notifications\.failedItemTitle'/);
   assert.match(engineSource, /chrome\.action\.setBadgeText/);
   assert.match(uiSource, /ui\.schedule/);
   assert.match(uiSource, /ui\.reschedule/);
@@ -197,7 +197,7 @@ test('Dry Run results show item number and preview without exposing target URLs'
 test('Scheduled Alarm creates a session when Queue has no prior session and reports empty Queue', () => {
   assert.match(engineSource, /current\.session \?\? \{/);
   assert.match(engineSource, /status: 'SCHEDULED'/);
-  assert.match(engineSource, /لا يوجد عنصر Queue قابل للتشغيل/);
+  assert.match(engineSource, /SCHEDULE_START_FAILED: defineEvent\('notifications\.scheduleStartFailedTitle'/);
   assert.match(engineSource, /handleScheduledStart/);
 });
 
@@ -661,30 +661,36 @@ test('Missed-schedule recovery stays user-driven and engine-owned', () => {
   }
 });
 
-test('Every engine notification is translatable through the notifyEvent bridge', () => {
-  const bridge = engineSource.slice(engineSource.indexOf('export async function notifyEvent'), engineSource.indexOf('export async function updateBadge'));
-  const extractTableKeys = (tableName) => {
-    const tableStart = bridge.indexOf(`const ${tableName}`);
-    const tableEnd = bridge.indexOf('};', tableStart);
-    return [...bridge.slice(tableStart, tableEnd).matchAll(/'([^']+)':/g)].map((m) => m[1]);
-  };
-  const titleKeys = extractTableKeys('titleKeys');
-  const messageKeys = extractTableKeys('messageKeys');
-  const dynamicSources = [...bridge.matchAll(/pattern: \/(\^[^/]+)\/u/g)].map((m) => m[1]);
-  assert.ok(titleKeys.length >= 13, 'notification title table must keep covering all titles');
-  assert.ok(messageKeys.length >= 10, 'notification message table must keep covering all messages');
-  // Walk every call site: the title must be mapped; literal or template messages must be mapped or dynamic.
-  const callSites = [...engineSource.matchAll(/notifyEvent\('([^']+)', ([^;]+?)\);/g)];
-  assert.ok(callSites.length >= 12, 'engine notification call sites must stay covered');
-  for (const [, title, messageExpr] of callSites) {
-    assert.ok(titleKeys.includes(title), `unmapped notification title: ${title}`);
-    const literal = messageExpr.startsWith('\'') ? messageExpr.slice(1, -1) : null;
-    if (literal !== null) {
-      const dynamic = dynamicSources.some((source) => new RegExp(source.replace(/\\/g, '\\'), 'u').test(literal));
-      assert.ok(messageKeys.includes(literal) || dynamic || /^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$/.test(literal), `unmapped notification message: ${literal}`);
-    }
+test('Every engine notification is translatable through the key-first notifyEvent bridge', () => {
+  const bridge = engineSource.slice(engineSource.indexOf('export const NOTIFICATION_EVENTS'), engineSource.indexOf('export async function updateBadge'));
+  // The bridge must be key-first: a typed registry + (key, params) signature.
+  assert.match(bridge, /export type NotificationEventKey = keyof typeof NOTIFICATION_EVENTS/);
+  assert.match(engineSource, /export async function notifyEvent\(event: NotificationEventKey, params\?: NotificationParams\)/);
+  // Registry size floor: one entry per engine notification event.
+  const registryKeys = [...bridge.matchAll(/^  ([A-Z][A-Z0-9_]+): defineEvent\('/gm)].map((m) => m[1]);
+  assert.ok(registryKeys.length >= 16, `notification registry must keep covering all events (found ${registryKeys.length})`);
+  // Walk every call site: keys only — no user-facing literals may leak back in.
+  const callSites = [...engineSource.matchAll(/notifyEvent\('([A-Z][A-Z0-9_]+)'/g)].map((m) => m[1]);
+  assert.ok(callSites.length >= 15, 'engine notification call sites must stay covered');
+  for (const key of callSites) assert.ok(registryKeys.includes(key), `call site uses unregistered notification event: ${key}`);
+  // No Arabic (or any string-literal) messages at call sites — key-first only.
+  const literalCallSites = [...engineSource.matchAll(/notifyEvent\('([X-X]?[^'][A-Za-z][^']*)'/g)].filter((m) => !registryKeys.includes(m[1]) && m[1].length > 2);
+  assert.equal(literalCallSites.length, 0, `notifyEvent call sites must only pass registry keys, found: ${literalCallSites.map((m) => m[1]).join(', ')}`);
+  // Every referenced i18n key (titles + messages + dynamic summary keys) must exist in ar AND en.
+  const ar = fs.readFileSync(path.join(root, 'src/i18n/ar.ts'), 'utf8');
+  const en = fs.readFileSync(path.join(root, 'src/i18n/en.ts'), 'utf8');
+  const referencedKeys = [...bridge.matchAll(/'(notifications\.[A-Za-z0-9]+)'/g)].map((m) => m[1]);
+  const summaryKeys = [...engineSource.matchAll(/summaryKey: preflight\.summaryKey/g)];
+  assert.ok(referencedKeys.length >= 20, 'registry must reference its title and message i18n keys');
+  assert.ok(summaryKeys.length >= 3, 'preflight failure call sites must forward the summary key');
+  for (const key of referencedKeys) {
+    const short = key.replace('notifications.', '');
+    assert.match(ar, new RegExp(`${short}:`), `ar.ts missing ${key}`);
+    assert.match(en, new RegExp(`${short}:`), `en.ts missing ${key}`);
   }
-  assert.match(bridge, /translateForLocale\(locale, message, messageParams/); // key-shaped messages resolve params
+  // The known regression: the controls-missing branch must be a registered event, not a ternary literal.
+  assert.match(engineSource, /CONTROLS_NOT_READY/);
+  assert.doesNotMatch(engineSource, /تعذر العثور على عناصر النشر/, 'call sites must not embed Arabic notification literals');
 });
 
 test('Header renders the session status exactly once and pagination has no dead code', () => {
