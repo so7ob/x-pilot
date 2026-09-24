@@ -480,6 +480,11 @@ h2, h3 { text-wrap: balance; }
 .command-palette-item-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; border-radius: var(--radius-sm); border: 1px solid var(--color-border-subtle); background: var(--color-surface-2); color: var(--color-text-2); transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast); }
 .command-palette-item[data-active="true"] .command-palette-item-icon { color: var(--color-primary); border-color: var(--color-border); background: var(--color-surface); }
 .command-palette-item-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+/* Matched-text highlight: accent color + soft accent underline so the hit
+   is visible in both themes without shouting. `mark` resets its UA styling. */
+.command-palette-item-label mark.command-palette-item-hl { background: none; padding: 0; color: var(--color-primary); font-weight: 700; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--color-accent) 60%, transparent); text-decoration-thickness: 2px; text-underline-offset: 3px; border-radius: 2px; }
+.command-palette-item[data-active="true"] .command-palette-item-label mark.command-palette-item-hl { text-decoration-color: var(--color-accent); }
+.command-palette-item:active .command-palette-item-label mark.command-palette-item-hl { opacity: .7; }
 .command-palette-item-hint { flex: none; font: inherit; font-size: 10px; line-height: 1; padding: 3px 6px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface-2); color: var(--color-text-3); }
 .command-palette-empty { padding: 26px 12px; text-align: center; color: var(--color-text-3); font-size: 13px; }
 .command-palette-footer { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 9px 15px; border-top: 1px solid var(--color-border-subtle); background: var(--color-surface-2); color: var(--color-text-3); font-size: 11px; }
@@ -524,6 +529,7 @@ h2, h3 { text-wrap: balance; }
   .command-palette-backdrop { background: #060b1480; }
   .command-palette { border-color: #3d5a80; box-shadow: 0 24px 64px #000000a8, 0 4px 14px #00000088; }
   .command-palette-item-icon { border-color: #26364b; background: #1c2839; }
+  .command-palette-item-label mark.command-palette-item-hl { color: #6fa9ef; text-decoration-color: #20b8d29e; }
   .backup-consent { border-color: #304157; border-inline-start-color: #3d8ce0; background: #16222f; }
   .backup-consent:hover { border-color: #3d5a80; }
   .backup-consent .check input:focus-visible { outline-color: #6fa9ef; }

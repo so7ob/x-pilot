@@ -5,7 +5,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { buildPaletteCommands, filterCommands, groupCommands, normalizeForMatch, recordRecentCommand, sanitizeRecentCommandIds, MAX_RECENT_COMMANDS } from '../src/ui/services/command-palette.ts';
+import {
+  buildPaletteCommands,
+  buildHighlightSegments,
+  filterCommands,
+  groupCommands,
+  matchCommand,
+  matchLabel,
+  normalizeForMatch,
+  normalizeWithIndexMap,
+  recordRecentCommand,
+  sanitizeRecentCommandIds,
+  SCORE_EXACT,
+  SCORE_PREFIX,
+  SCORE_WORD_START,
+  SCORE_LABEL_INCLUDES,
+  SCORE_KEYWORD_EXACT,
+  SCORE_KEYWORD_PREFIX,
+  SCORE_KEYWORD_INCLUDES,
+  SCORE_SUBSEQUENCE_BASE,
+  SUBSEQUENCE_MIN_QUERY,
+  MAX_RECENT_COMMANDS,
+} from '../src/ui/services/command-palette.ts';
 
 const tab = (id, label) => ({ id: `tab:${id}`, kind: 'tab', label, value: id });
 const command = (id, label, keywords = []) => ({ id, kind: 'action', label, keywords });
@@ -146,4 +167,106 @@ test('groupCommands surfaces recents as the leading group without duplicating th
   assert.deepEqual(withoutRecents.map((group) => group.kind), ['tab', 'action', 'workspace'], 'no recents keeps the legacy shape');
   const emptyRecent = groupCommands(commands, labels, { ids: ['ghost'], label: 'Recently used' });
   assert.deepEqual(emptyRecent.map((group) => group.kind), ['tab', 'action', 'workspace'], 'an all-stale recent list yields no recent group');
+});
+
+
+// ---- fuzzy scoring + highlighting engine (Cycle B, v1.11.0) ----
+
+const H = (label) => [...label].map((_, i) => i); // 0..n-1 positions
+
+test('normalizeWithIndexMap tracks original positions through folds and stripped marks', () => {
+  // 1:1 fold: every normalized char maps to its source index
+  const folded = normalizeWithIndexMap('الإعدادات');
+  assert.equal(folded.normalized, 'الاعدادات');
+  assert.equal(folded.map.length, folded.normalized.length);
+  assert.deepEqual(folded.map, [...folded.normalized].map((_, i) => i));
+  // Marks are stripped and the map skips their positions
+  const marked = normalizeWithIndexMap('عَلَيْهِ');
+  assert.equal(marked.normalized, 'عليه');
+  assert.deepEqual(marked.map, [0, 2, 4, 6]);
+  // Leading whitespace trims with the map re-based
+  const padded = normalizeWithIndexMap('  abc');
+  assert.equal(padded.normalized, 'abc');
+  assert.deepEqual(padded.map, [2, 3, 4]);
+});
+
+test('matchLabel walks the ladder: exact > prefix > word-start > includes > subsequence', () => {
+  assert.equal(matchLabel('الجلسات', 'الجلسات').score, SCORE_EXACT);
+  assert.equal(matchLabel('Refresh data', 'refresh').score, SCORE_PREFIX + 7);
+  assert.equal(matchLabel('Clear view filters', 'view').score, SCORE_WORD_START + 4);
+  assert.equal(matchLabel('Tweet Banks', 'anks').score, SCORE_LABEL_INCLUDES - 7);
+  // Subsequence: letters in order with gaps, min length 2
+  const sub = matchLabel('الجلسات', 'الجسات');
+  assert.ok(sub.matched);
+  // runs [0,1,2] and [4,5,6] = 4 consecutive bonuses; one skipped char (ل) = 1 gap unit
+  assert.equal(sub.score, SCORE_SUBSEQUENCE_BASE + 4 * 15 - 1 * 2);
+  assert.deepEqual(sub.ranges, [[0, 3], [4, 7]], 'skipped label chars stay unhighlighted');
+  assert.equal(matchLabel('الجلسات', 'ا').score >= SCORE_PREFIX, true, '1-char query that IS a prefix still matches exactly');
+  assert.equal(matchLabel('Refresh data', 'z').matched, false, '1-char query never goes fuzzy beyond substring ladder');
+  assert.equal(matchLabel('الجلسات', 'سات').matched, true, '2-char query may subsequence-match');
+  assert.equal(matchLabel('الجلسات', 'zzz').matched, false);
+});
+
+test('matchLabel reports highlight ranges in ORIGINAL coordinates', () => {
+  // includes on a plain label
+  assert.deepEqual(matchLabel('Tweet Banks', 'banks').ranges, [[6, 11]]);
+  // hamza-less query hits the folded label but highlights the real glyphs
+  const folded = matchLabel('الإعدادات', 'اعدادات');
+  assert.deepEqual(folded.ranges, [[2, 9]]);
+  // diacritics split the match into per-glyph ranges in ORIGINAL coordinates
+  const marked = matchLabel('عَلَيْهِ', 'عليه');
+  assert.deepEqual(marked.ranges, [[0, 1], [2, 3], [4, 5], [6, 7]]);
+});
+
+test('matchCommand prefers the label and never highlights keyword-only matches', () => {
+  const command = { id: 'x', kind: 'action', label: 'Export data', keywords: ['تصدير'] };
+  assert.deepEqual(matchCommand(command, 'تصدير'), { matched: true, score: SCORE_KEYWORD_EXACT, ranges: [] });
+  assert.equal(matchCommand(command, 'تصدي').score, SCORE_KEYWORD_PREFIX);
+  assert.equal(matchCommand(command, 'صدي').score, SCORE_KEYWORD_INCLUDES);
+  assert.equal(matchCommand({ ...command, label: 'تصدير' }, 'تصدير').score, SCORE_EXACT, 'label beats keyword');
+  assert.equal(matchCommand(command, 'zzz').matched, false);
+});
+
+test('filterCommands ranks survivors best-first and stays stable on ties', () => {
+  const commands = [
+    { id: 'weak', kind: 'action', label: 'Restore from backup', keywords: [] },
+    { id: 'prefix', kind: 'action', label: 'Refresh data', keywords: [] },
+    { id: 'keyword', kind: 'action', label: 'Download everything', keywords: ['refresh'] },
+    { id: 'sub', kind: 'action', label: 'Reorder queue items', keywords: [] },
+  ];
+  assert.deepEqual(filterCommands(commands, 'refresh').map((c) => c.id), ['prefix', 'keyword'], 'no label hit and no keyword hit => not matched (subsequence is label-only)');
+  // subsequence 'rordr' hits 'Reorder...' only
+  assert.deepEqual(filterCommands(commands, 'rordr').map((c) => c.id), ['sub']);
+  // empty query: everything, original order
+  assert.deepEqual(filterCommands(commands, '').map((c) => c.id), commands.map((c) => c.id));
+  // tie stability: identical scores keep builder order
+  const ties = [
+    { id: 'a', kind: 'action', label: 'Alpha one', keywords: [] },
+    { id: 'b', kind: 'action', label: 'Alpha two', keywords: [] },
+  ];
+  assert.deepEqual(filterCommands(ties, 'alpha').map((c) => c.id), ['a', 'b']);
+});
+
+test('buildHighlightSegments splits only matched parts and handles Arabic + multi-range', () => {
+  assert.deepEqual(buildHighlightSegments('Tweet Banks', ''), [{ text: 'Tweet Banks', highlighted: false }]);
+  assert.deepEqual(buildHighlightSegments('Tweet Banks', 'banks'), [
+    { text: 'Tweet ', highlighted: false },
+    { text: 'Banks', highlighted: true },
+  ]);
+  // folded query highlights the real glyphs (skips ال)
+  assert.deepEqual(buildHighlightSegments('الإعدادات', 'اعدادات'), [
+    { text: 'ال', highlighted: false },
+    { text: 'إعدادات', highlighted: true },
+  ]);
+  // subsequence produces multiple disjoint ranges (greedy earliest positions)
+  const segments = buildHighlightSegments('Restore from backup', 'rsbk');
+  assert.deepEqual(segments.filter((s) => s.highlighted).map((s) => s.text), ['R', 's', 'b', 'k']);
+  // whitespace-only query degrades to no highlight
+  assert.deepEqual(buildHighlightSegments('Label', '   '), [{ text: 'Label', highlighted: false }]);
+});
+
+test('SUBSEQUENCE_MIN_QUERY guards single-letter fuzzy noise', () => {
+  assert.equal(SUBSEQUENCE_MIN_QUERY, 2);
+  const commands = [{ id: 'a', kind: 'action', label: 'Clear view filters', keywords: [] }];
+  assert.deepEqual(filterCommands(commands, 'z'), []);
 });
