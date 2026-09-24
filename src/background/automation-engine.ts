@@ -6,6 +6,7 @@ import { runPreflight } from '../domain/preflight';
 import { getNextAllowedPublishingTime } from '../domain/scheduling';
 import { decideAlarmFailure } from '../domain/alarm-recovery';
 import { shouldNeverRepublish } from '../domain/data-integrity.ts';
+import { sanitizePublishedPostUrl } from '../domain/published-post-url.ts';
 import { getStoredLocale, formatDateTimeForLocale, translateForLocale } from '../i18n/translate.ts';
 import { acquireStartLock, claimAutomationOwner, getAutomationOwner, getHistoricalSessions, getMeta, getSettings, getState as getActiveState, getWorkspaceSettings, getWorkspaceState, listWorkspaces, releaseAutomationOwner, releaseStartLock, renewStartLock, saveHistoricalSession, updateHistoricalSession, updateState as updateActiveState, updateWorkspaceState } from '../storage/storage-repository';
 
@@ -440,7 +441,10 @@ async function processCurrentItem(): Promise<void> {
     await wait(1800);
     const after = await inspectTab(tabId);
     const publishedUrlResult = await chrome.tabs.sendMessage(tabId, { type: 'X_GET_PUBLISHED_URL' }).catch(() => undefined) as { publishedPostUrl?: string } | undefined;
-    const publishedPostUrl = publishedUrlResult?.publishedPostUrl;
+    // Shape guard (Closes #67): only a canonical x.com status permalink may
+    // reach history — anything else is dropped, an honest missing link beats
+    // a wrong link.
+    const publishedPostUrl = sanitizePublishedPostUrl(publishedUrlResult?.publishedPostUrl);
     if (after.dailyPostLimitReached || after.reason === 'X_DAILY_POST_LIMIT_REACHED') throw new Error('X_DAILY_POST_LIMIT_REACHED');
     if (!result?.ok) throw new Error(result?.reason ?? 'PUBLISH_FAILED');
     const finalStatus = after.composerFound && after.contentPresent ? 'PUBLISHED_UNVERIFIED' : 'PUBLISHED';

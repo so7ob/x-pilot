@@ -284,21 +284,80 @@ test('publish() never clicks when the page is not ready', () => {
   } finally { unmount(); dom.window.close(); }
 });
 
-test('getPublishedPostUrl prefers the newest status anchor', () => {
-  const dom = mount('<a href="https://x.com/alice/status/111">1</a><a href="https://x.com/alice/status/222">2</a><a href="https://x.com/alice/other">x</a>', 'https://x.com/home');
+const OWN_PROFILE_LINK = '<a data-testid="AppTabBar_Profile_Link" href="/so7ob">Profile</a>';
+// Exact shape of the user-reported wrong recording (#67): a DOM full of
+// foreign accounts' status links including an analytics upsell row.
+const FOREIGN_NOISE = '<a href="https://x.com/Minahil42298354/status/2103137624256885245/analytics">Post analytics</a><a href="https://x.com/SomeoneElse/status/999888777">timeline post</a><a href="https://x.com/Minahil42298354/status/111222333">another foreign post</a>';
+
+test('published URL comes from the post-publish toast, never from foreign DOM links (user regression #67)', () => {
+  const dom = mount(`${OWN_PROFILE_LINK}${FOREIGN_NOISE}<div data-testid="toast"><span>Your post was sent.</span><a href="https://x.com/so7ob/status/2103265707043835909">View</a></div>`, 'https://x.com/home');
   try {
-    assert.equal(getPublishedPostUrl(), 'https://x.com/alice/status/222');
+    assert.equal(getPublishedPostUrl(), 'https://x.com/so7ob/status/2103265707043835909');
   } finally { unmount(); dom.window.close(); }
 });
 
-test('getPublishedPostUrl falls back to the current status URL', () => {
-  const dom = mount('<div>no anchors here</div>', 'https://x.com/bob/status/333');
+test('toast link is canonicalized: /analytics suffix, legacy host and query are stripped', () => {
+  const dom = mount(`${OWN_PROFILE_LINK}<div data-testid="toast"><a href="https://twitter.com/so7ob/status/42/analytics?s=20">View</a></div>`, 'https://x.com/home');
   try {
-    assert.equal(getPublishedPostUrl(), 'https://x.com/bob/status/333');
+    assert.equal(getPublishedPostUrl(), 'https://x.com/so7ob/status/42');
   } finally { unmount(); dom.window.close(); }
 });
 
-test('getPublishedPostUrl returns undefined off a status context', () => {
+test('toast link from a foreign account is rejected when the screen name is known', () => {
+  const dom = mount(`${OWN_PROFILE_LINK}${FOREIGN_NOISE}<div data-testid="toast"><a href="https://x.com/Minahil42298354/status/2103137624256885245">View</a></div>`, 'https://x.com/home');
+  try {
+    assert.equal(getPublishedPostUrl(), undefined);
+  } finally { unmount(); dom.window.close(); }
+});
+
+test('fresh own permalink that appeared after publish() is accepted when the toast is gone', () => {
+  const dom = mount(`${OWN_PROFILE_LINK}${FOREIGN_NOISE}<a href="https://x.com/so7ob/status/100">old own post</a>${MODERN_COMPOSER}`, 'https://x.com/home');
+  try {
+    assert.equal(publish().ok, true);
+    dom.window.document.body.insertAdjacentHTML('beforeend', '<a href="https://x.com/so7ob/status/2103265707043835909">new post</a>');
+    assert.equal(getPublishedPostUrl(), 'https://x.com/so7ob/status/2103265707043835909');
+  } finally { unmount(); dom.window.close(); }
+});
+
+test('pre-existing own posts and foreign links are never recorded when no trusted signal exists', () => {
+  const dom = mount(`${OWN_PROFILE_LINK}${FOREIGN_NOISE}<a href="https://x.com/so7ob/status/100">old own post</a>${MODERN_COMPOSER}`, 'https://x.com/home');
+  try {
+    assert.equal(publish().ok, true);
+    assert.equal(getPublishedPostUrl(), undefined);
+  } finally { unmount(); dom.window.close(); }
+});
+
+test('fresh foreign links are rejected even when the logged-in account is known', () => {
+  const dom = mount(`${OWN_PROFILE_LINK}${MODERN_COMPOSER}`, 'https://x.com/home');
+  try {
+    assert.equal(publish().ok, true);
+    dom.window.document.body.insertAdjacentHTML('beforeend', '<a href="https://x.com/Minahil42298354/status/2103137624256885245/analytics">foreign analytics row</a>');
+    assert.equal(getPublishedPostUrl(), undefined);
+  } finally { unmount(); dom.window.close(); }
+});
+
+test('location fallback accepts our own permalink', () => {
+  const dom = mount(OWN_PROFILE_LINK, 'https://x.com/so7ob/status/777');
+  try {
+    assert.equal(getPublishedPostUrl(), 'https://x.com/so7ob/status/777');
+  } finally { unmount(); dom.window.close(); }
+});
+
+test('location fallback accepts the internal /i/web/status own-post redirect', () => {
+  const dom = mount('', 'https://x.com/i/web/status/888');
+  try {
+    assert.equal(getPublishedPostUrl(), 'https://x.com/i/web/status/888');
+  } finally { unmount(); dom.window.close(); }
+});
+
+test('location fallback rejects someone else\u2019s permalink (reply-composer pages)', () => {
+  const dom = mount(OWN_PROFILE_LINK, 'https://x.com/stranger/status/555');
+  try {
+    assert.equal(getPublishedPostUrl(), undefined);
+  } finally { unmount(); dom.window.close(); }
+});
+
+test('honest undefined when nothing trusted exists (no toast, no fresh links, non-permalink page)', () => {
   const dom = mount('<a href="https://cdn.x.com/media/1">ad</a>', 'https://x.com/home');
   try {
     assert.equal(getPublishedPostUrl(), undefined);
