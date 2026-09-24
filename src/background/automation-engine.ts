@@ -1,4 +1,4 @@
-import type { AppState, AutomationSession, ContentInspection, RuntimeStatus } from '../domain/models';
+import type { AppState, AutomationSession, ContentInspection, LegacyPublishAttempt, QueueItem, RuntimeStatus } from '../domain/models';
 import { createHistoricalSession } from '../domain/models';
 import { buildStartOverQueue, countStartOverResets, hasFutureRecoveryAlarm, normalizeRecovery } from '../domain/recovery';
 import { canStartItem, getNextPendingItem, getNextRunnableItem } from '../domain/state-machine';
@@ -29,6 +29,69 @@ export const ALARM_NAME = 'x-queue-next-item';
 export const SCHEDULE_ALARM_NAME = 'x-queue-scheduled-start';
 const AUTOMATION_TAB_KEY = 'automationTabId';
 export const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Max characters of tweet content kept in the analytical attempt snapshot. */
+export const ATTEMPT_TWEET_LABEL_MAX = 160;
+
+export interface AttemptEntryInput {
+  item: QueueItem;
+  sessionId: string;
+  workspaceId?: string;
+  banks?: Array<{ id: string; name: string; url: string }>;
+  timestamp: number;
+  attemptNumber: number;
+  result: string;
+  error?: string;
+  publishedPostUrl?: string;
+  durationMs?: number;
+  id?: string;
+}
+
+/**
+ * Builds an analytical publish-attempt history entry.
+ *
+ * Captures the full tweet snapshot at attempt time — content/label, source
+ * bank (id + name), queue position, elapsed duration, adapter — alongside the
+ * classic fields and the published post link for successful publishes.
+ * Pure aside from the optional generated id; guarded by contracts.
+ */
+export function buildAttemptEntry(input: AttemptEntryInput): LegacyPublishAttempt {
+  const { item } = input;
+  const bank = input.banks?.find((candidate) => candidate.id === item.sourceBankId)
+    ?? (item.sourceBankUrl ? input.banks?.find((candidate) => candidate.url === item.sourceBankUrl) : undefined);
+  const rawLabel = item.label?.trim() || item.normalizedContent?.trim() || '';
+  return {
+    id: input.id ?? crypto.randomUUID(),
+    workspaceId: input.workspaceId,
+    sessionId: input.sessionId,
+    queueItemId: item.id,
+    link: item.targetUrl,
+    sourceUrl: item.targetUrl,
+    publishedPostUrl: input.publishedPostUrl,
+    timestamp: input.timestamp,
+    attemptNumber: input.attemptNumber,
+    action: 'PUBLISH',
+    result: input.result,
+    error: input.error,
+    tweetLabel: rawLabel ? rawLabel.slice(0, ATTEMPT_TWEET_LABEL_MAX) : undefined,
+    bankId: item.sourceBankId,
+    bankName: bank?.name,
+    itemPosition: item.position,
+    durationMs: input.durationMs,
+    adapter: 'x',
+  };
+}
+
+/** Resolves the owning workspace's banks for analytical snapshots; never throws. */
+async function loadWorkspaceBanks(workspaceId?: string): Promise<Array<{ id: string; name: string; url: string }>> {
+  if (!workspaceId) return [];
+  try {
+    return (await getWorkspaceState(workspaceId)).banks ?? [];
+  } catch {
+    return [];
+  }
+}
+
 const injectedContentTabs = new Set<number>();
 const contentInjectionInFlight = new Map<number, Promise<void>>();
 
@@ -280,6 +343,7 @@ async function processCurrentItem(): Promise<void> {
   if (!session || session.status !== 'RUNNING' || !session.currentItemId) return;
   const item = state.queue.find((candidate) => candidate.id === session.currentItemId);
   if (!item || shouldNeverRepublish(item) || !canStartItem(item.status)) return;
+  const banks = await loadWorkspaceBanks(state.workspaceId ?? session.workspaceId);
   const profile = await getWorkspaceSettings(state.workspaceId ?? session.workspaceId ?? (await getMeta()).activeWorkspaceId);
   const allowedAt = getNextAllowedPublishingTime(Date.now(), profile.timezone, profile.publishingWindows);
   if (allowedAt && allowedAt > Date.now() + 500) {
@@ -330,7 +394,7 @@ async function processCurrentItem(): Promise<void> {
       ...current,
       queue: current.queue.map((candidate) => candidate.id === item.id ? { ...candidate, status: finalStatus, publishedAt: finishedAt, updatedAt: finishedAt, operationId: undefined, publishIntentId: undefined, publishStartedAt: undefined, publishSubmittedAt: undefined } : candidate),
       session: current.session ? { ...current.session, status: nextStatus, currentItemId: nextItem?.id, currentIndex: nextItem?.position ?? current.session.currentIndex, nextRunAt, completedAt: nextStatus === 'COMPLETED' ? finishedAt : current.session.completedAt, updatedAt: finishedAt } : null,
-      history: [...current.history, { id: crypto.randomUUID(), workspaceId: current.workspaceId, sessionId: session.id, queueItemId: item.id, link: item.targetUrl, sourceUrl: item.targetUrl, publishedPostUrl, timestamp: finishedAt, attemptNumber: item.attempts + 1, action: 'PUBLISH', result: finalStatus }]
+      history: [...current.history, buildAttemptEntry({ id: crypto.randomUUID(), item, sessionId: session.id, workspaceId: current.workspaceId, banks, timestamp: finishedAt, attemptNumber: item.attempts + 1, result: finalStatus, publishedPostUrl, durationMs: finishedAt - startedAt })]
     }));
     await syncHistoricalSession(nextState, nextStatus === 'COMPLETED' ? 'COMPLETED' : 'WAITING');
     await chrome.alarms.clear(ALARM_NAME);
@@ -351,7 +415,7 @@ async function processCurrentItem(): Promise<void> {
           ? { ...candidate, status: 'PENDING', attempts: item.attempts, lastError: message, operationId: undefined, updatedAt: Date.now() }
           : candidate),
         session: currentState.session ? { ...currentState.session, status: 'PAUSED', currentItemId: item.id, nextRunAt: undefined, updatedAt: Date.now() } : null,
-        history: [...currentState.history, { id: crypto.randomUUID(), workspaceId: currentState.workspaceId, sessionId: session.id, queueItemId: item.id, link: item.targetUrl, sourceUrl: item.targetUrl, timestamp: Date.now(), attemptNumber: item.attempts, action: 'PUBLISH', result: 'PAUSED', error: message }]
+        history: [...currentState.history, buildAttemptEntry({ id: crypto.randomUUID(), item, sessionId: session.id, workspaceId: currentState.workspaceId, banks, timestamp: Date.now(), attemptNumber: item.attempts, result: 'PAUSED', error: message, durationMs: Date.now() - startedAt })]
       }));
       await syncHistoricalSession(pausedState, 'PAUSED', message);
       await chrome.alarms.clear(ALARM_NAME);
@@ -381,7 +445,7 @@ async function processCurrentItem(): Promise<void> {
           ? { ...candidate, status: 'PUBLISHED_UNVERIFIED', publishedAt: candidate.publishedAt ?? uncertainAt, lastError: 'PUBLISH_OUTCOME_UNVERIFIED', operationId: undefined, updatedAt: uncertainAt }
           : candidate),
         session: currentState.session ? { ...currentState.session, status: 'PAUSED', currentItemId: item.id, nextRunAt: undefined, updatedAt: uncertainAt } : null,
-        history: [...currentState.history, { id: crypto.randomUUID(), workspaceId: currentState.workspaceId, sessionId: session.id, queueItemId: item.id, link: item.targetUrl, sourceUrl: item.targetUrl, timestamp: uncertainAt, attemptNumber: item.attempts, action: 'PUBLISH', result: 'PUBLISHED_UNVERIFIED', error: 'PUBLISH_OUTCOME_UNVERIFIED' }]
+        history: [...currentState.history, buildAttemptEntry({ id: crypto.randomUUID(), item, sessionId: session.id, workspaceId: currentState.workspaceId, banks, timestamp: uncertainAt, attemptNumber: item.attempts, result: 'PUBLISHED_UNVERIFIED', error: 'PUBLISH_OUTCOME_UNVERIFIED', durationMs: uncertainAt - startedAt })]
       }));
       await syncHistoricalSession(uncertain, 'PAUSED', 'PUBLISH_OUTCOME_UNVERIFIED');
       await chrome.alarms.clear(ALARM_NAME);
@@ -405,7 +469,7 @@ async function processCurrentItem(): Promise<void> {
       ...currentState,
       queue: currentState.queue.map((candidate) => candidate.id === item.id ? { ...candidate, status: failedStatus, lastError: message, operationId: undefined, updatedAt: Date.now() } : candidate),
       session: currentState.session ? { ...currentState.session, status: nextStatus, currentItemId: nextItemId, currentIndex: nextItemIndex ?? currentState.session.currentIndex, nextRunAt, completedAt: nextStatus === 'COMPLETED' ? Date.now() : currentState.session.completedAt, updatedAt: Date.now() } : null,
-      history: [...currentState.history, { id: crypto.randomUUID(), workspaceId: currentState.workspaceId, sessionId: session.id, queueItemId: item.id, link: item.targetUrl, sourceUrl: item.targetUrl, timestamp: Date.now(), attemptNumber: item.attempts + 1, action: 'PUBLISH', result: failedStatus, error: message }]
+      history: [...currentState.history, buildAttemptEntry({ id: crypto.randomUUID(), item, sessionId: session.id, workspaceId: currentState.workspaceId, banks, timestamp: Date.now(), attemptNumber: item.attempts + 1, result: failedStatus, error: message, durationMs: Date.now() - startedAt })]
     }));
     await syncHistoricalSession(failedState, nextStatus === 'COMPLETED' ? 'COMPLETED' : nextStatus === 'PAUSED' ? 'PAUSED' : 'WAITING', message);
     await chrome.alarms.clear(ALARM_NAME);

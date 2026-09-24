@@ -25,12 +25,31 @@ import { loadSavedFilters, queueSavedFilterSave, type SavedFilterView } from './
 import { loadFilterPresets, saveFilterPreset, deleteFilterPreset, renameFilterPreset, moveFilterPreset, presetsForView, hasFilterSelection, filtersEqual, normalizePresetName, MAX_FILTER_PRESET_NAME_LENGTH, type FilterPreset, type FilterPresetView, type MovePresetDirection } from './services/filter-presets';
 import { isSearchFocusEvent, isPaletteShortcut } from './services/keyboard';
 import { isSessionHistoryExportEnvelope } from '../domain/session-export.ts';
+import { buildSessionAnalytics } from '../domain/session-analytics';
 import { buildAnalyticsCsv } from '../domain/analytics-export';
 import { formatDateTime, useI18n } from '../i18n';
 import './styles.css';
 
 const initialState: AppState = { queue: [], session: null, history: [] };
 const initialRuntimeStatus: RuntimeStatus = { engineStatus: 'IDLE', connection: 'NOT_REQUIRED', checkedAt: 0 };
+
+/** Max characters shown for a tweet content snippet in the session log. */
+const TWEET_SNIPPET_MAX = 160;
+
+/**
+ * Legacy-friendly tweet info resolver for the analytical session log:
+ * prefers the snapshot captured on the attempt itself, falls back to the live
+ * queue item (label / normalized content) so older rows still show the tweet.
+ */
+function resolveAttemptTweet(attempt: PublishAttempt, item?: QueueItem, bankNames?: Map<string, string>): { label?: string; bankName?: string; position?: number } {
+  const raw = attempt.tweetLabel?.trim() || item?.label?.trim() || item?.normalizedContent?.trim() || '';
+  const bankId = attempt.bankId ?? item?.sourceBankId;
+  return {
+    label: raw ? raw.slice(0, TWEET_SNIPPET_MAX) : undefined,
+    bankName: attempt.bankName ?? (bankId && bankNames ? bankNames.get(bankId) : undefined),
+    position: attempt.itemPosition ?? item?.position,
+  };
+}
 
 /** Focuses the visible view's search input (shared by shortcuts and the palette). */
 function focusVisibleSearch(): void {
@@ -104,15 +123,25 @@ function App() {
   const copyText = async (value: string) => {
     try { await navigator.clipboard.writeText(value); setNotice(t('common.copied')); } catch { setNotice(t('common.copyFailed')); }
   };
-  const copySessionSummary = (record: HistoricalSession, attemptsCount: number, durationMs?: number) => {
+  const copySessionSummary = (record: HistoricalSession, attempts: PublishAttempt[], durationMs?: number) => {
+    const analytics = buildSessionAnalytics({ session: record, attempts });
+    const linkLines = attempts
+      .filter((attempt) => attempt.publishedPostUrl && (attempt.result === 'PUBLISHED' || attempt.result === 'PUBLISHED_UNVERIFIED'))
+      .map((attempt) => {
+        const info = resolveAttemptTweet(attempt, queueItemDirectory.get(attempt.queueItemId), bankNameDirectory);
+        return `• ${info.label || `${t('common.item')} ${info.position ?? attempt.queueItemId}`} → ${attempt.publishedPostUrl}`;
+      });
     const lines = [
       `${t('sessions.title')} — ${formatDateTime(record.startedAt)}`,
       `${t('common.status')}: ${t('statuses.' + record.status)}`,
-      `${t('analytics.published')}: ${record.publishedCount}`,
-      `${t('analytics.failed')}: ${record.failedCount}`,
-      `${t('analytics.skipped')}: ${record.skippedCount}`,
-      `${t('common.attempts')}: ${attemptsCount}`,
-      durationMs !== undefined ? `${t('sessions.duration')}: ${Math.round(durationMs / 1000)} ${t('units.seconds')}` : ''
+      `${t('sessions.successRate')}: ${analytics.successRate}%`,
+      `${t('analytics.published')}: ${record.publishedCount} · ${t('analytics.failed')}: ${record.failedCount} · ${t('analytics.skipped')}: ${record.skippedCount}`,
+      `${t('common.attempts')}: ${analytics.attemptsCount} · ${t('sessions.tweets')}: ${analytics.distinctTweets}`,
+      `${t('sessions.withLink')}: ${analytics.publishedWithLinkCount}`,
+      durationMs !== undefined ? `${t('sessions.duration')}: ${Math.round(durationMs / 1000)} ${t('units.seconds')}` : '',
+      analytics.avgAttemptMs !== undefined ? `${t('sessions.avgAttempt')}: ${Math.max(1, Math.round(analytics.avgAttemptMs / 1000))} ${t('units.seconds')}` : '',
+      linkLines.length ? `${t('sessions.linksDigest')}:` : '',
+      ...linkLines,
     ].filter(Boolean);
     return copyText(lines.join('\n'));
   };
@@ -345,6 +374,10 @@ function App() {
   };
   const searchData = workspaceStatesToSearchData(workspaceStates);
   const currentWorkspaceId = meta?.activeWorkspaceId ?? '';
+  // Live directories for the analytical session log: resolve legacy attempts
+  // (no captured snapshot) to their tweet content / bank name / position.
+  const queueItemDirectory = new Map(workspaceStates.flatMap((workspaceState) => workspaceState.queue ?? []).map((item) => [item.id, item]));
+  const bankNameDirectory = new Map([...workspaceStates.flatMap((workspaceState) => workspaceState.banks ?? []), ...banks].map((bank) => [bank.id, bank.name]));
   const visibleQueue = filterQueue(searchData.queue.length ? searchData.queue : state.queue.map((item) => ({ ...item, workspaceId: item.workspaceId ?? currentWorkspaceId })), queueFilters, searchData.banks.length ? searchData.banks : banks, currentWorkspaceId);
   const queuePageCount = getPageCount(visibleQueue.length, queuePageSize);
   const safeQueuePage = Math.min(queuePage, queuePageCount);
@@ -459,7 +492,7 @@ function App() {
 
     {activeTab === 'sessions' && <section className="tab-panel activity-panel" role="tabpanel" aria-label={t('nav.sessions')}>
       <section className="card"><div className="section-heading"><div><span className="eyebrow">{t('sessions.eyebrow')}</span><h2>{t('sessions.title')}</h2></div><button onClick={() => void exportSessionHistory()}>{t('sessions.export')}</button><button onClick={() => void refreshHistory()}>{t('actions.refresh')}</button></div><SearchToolbar filters={sessionFilters} onChange={setSessionFilters} workspaces={workspaces} showStatus sessionOptions={visibleSessions} activeWorkspaceId={currentWorkspaceId} view="sessions" onNotice={setNotice} /><div className="search-count">{t('sessions.count', { visible: visibleSessions.length, total: searchData.sessions.length || sessionHistory.length })}</div></section>
-      <section className="card activity-list">{visibleSessions.map((record) => { const attempts = filterHistory(searchData.history, sessionFilters, currentWorkspaceId).filter((attempt) => attempt.sessionId === record.id); const duration = record.completedAt && record.startedAt ? Math.max(0, record.completedAt - record.startedAt) : undefined; return <article className="session-summary" key={record.id}><div className="session-summary-header"><div><strong>{formatDateTime(record.startedAt)}</strong><small>{t('statuses.' + record.status)} · {record.totalItems} {t('units.items')}</small><small dir="ltr">Session: {record.id}</small></div><div className="history-counts"><span>✓ {record.publishedCount}</span><span>! {record.failedCount}</span><span>↷ {record.skippedCount}</span></div><button className="link-action" onClick={() => copySessionSummary(record, attempts.length, duration)}>{t('sessions.copySummary')}</button></div><div className="session-summary-meta"><span>{t('sessions.started')}: {formatDateTime(record.startedAt)}</span><span>{t('sessions.ended')}: {record.completedAt ? formatDateTime(record.completedAt) : t('sessions.notEnded')}</span><span>{t('sessions.duration')}: {duration === undefined ? '—' : String(Math.round(duration / 1000)) + ' ' + t('units.seconds')}</span><span>{t('common.attempts')}: {attempts.length}</span></div><div className="session-attempts"><h3>{t('history.title')}</h3>{attempts.map((attempt) => <div className="history-row" key={attempt.id}><div><strong>{formatDateTime(attempt.timestamp)}</strong><small>{t('statuses.' + attempt.result)} · {attempt.action} · {t('ui.currentItem')} {attempt.queueItemId}</small><small>{t('common.attempts')}: {attempt.attemptNumber}</small>{(attempt.sourceUrl ?? attempt.link) && <a className="secondary-link" href={attempt.sourceUrl ?? attempt.link} target="_blank" rel="noreferrer">{t('sessions.sourceLink')}</a>}{attempt.publishedPostUrl ? <a className="primary-link" href={attempt.publishedPostUrl} target="_blank" rel="noreferrer">{t('sessions.publishedLink')}</a> : attempt.result === 'PUBLISHED' || attempt.result === 'PUBLISHED_UNVERIFIED' ? <small className="muted">{t('sessions.publishedLinkUnavailable')}</small> : null}{attempt.publishedPostUrl && <button className="link-action" onClick={() => void copyText(attempt.publishedPostUrl!)}>{t('history.copyLink')}</button>}{attempt.error && <small className="error-text">{getUserFacingMessage(attempt.error)}</small>}</div></div>)}{!attempts.length && <p className="empty-list-state">{t('history.noMatch')}</p>}</div></article>; })}{!visibleSessions.length && <p className="empty-list-state">{t('sessions.noMatch')}</p>}</section>
+      <section className="card activity-list">{visibleSessions.map((record) => { const attempts = filterHistory(searchData.history, sessionFilters, currentWorkspaceId).filter((attempt) => attempt.sessionId === record.id); const duration = record.completedAt && record.startedAt ? Math.max(0, record.completedAt - record.startedAt) : undefined; const analytics = buildSessionAnalytics({ session: record, attempts }); return <article className="session-summary" key={record.id}><div className="session-summary-header"><div><strong>{formatDateTime(record.startedAt)}</strong><small>{t('statuses.' + record.status)} · {record.totalItems} {t('units.items')}</small><small dir="ltr">Session: {record.id}</small></div><div className="history-counts"><span>✓ {record.publishedCount}</span><span>! {record.failedCount}</span><span>↷ {record.skippedCount}</span></div><button className="link-action" onClick={() => copySessionSummary(record, attempts, duration)}>{t('sessions.copySummary')}</button></div><div className="session-analytics" role="group" aria-label={t('common.insights')}><div className="success-rate" role="img" aria-label={`${t('sessions.successRate')}: ${analytics.successRate}%`}><span className="success-rate-track" aria-hidden="true"><span className="success-rate-fill" style={{ width: `${analytics.successRate}%` }} /></span><span className="success-rate-value" dir="ltr">{analytics.successRate}%</span><span className="success-rate-label">{t('sessions.successRate')}</span></div><div className="stat-chips"><span className="stat-chip">{t('common.attempts')}: {analytics.attemptsCount}</span><span className="stat-chip">{t('sessions.tweets')}: {analytics.distinctTweets}</span><span className="stat-chip accent">{t('sessions.withLink')}: {analytics.publishedWithLinkCount}</span>{analytics.missingLinkCount > 0 && <span className="stat-chip warn">{t('sessions.missingLink')}: {analytics.missingLinkCount}</span>}{analytics.avgAttemptMs !== undefined && <span className="stat-chip">{t('sessions.avgAttempt')}: ≈{Math.max(1, Math.round(analytics.avgAttemptMs / 1000))} {t('units.seconds')}</span>}</div></div><div className="session-summary-meta"><span>{t('sessions.started')}: {formatDateTime(record.startedAt)}</span><span>{t('sessions.ended')}: {record.completedAt ? formatDateTime(record.completedAt) : t('sessions.notEnded')}</span><span>{t('sessions.duration')}: {duration === undefined ? '—' : String(Math.round(duration / 1000)) + ' ' + t('units.seconds')}</span><span>{t('common.attempts')}: {attempts.length}</span></div><div className="session-attempts"><h3>{t('history.title')}</h3>{attempts.map((attempt) => { const tweet = resolveAttemptTweet(attempt, queueItemDirectory.get(attempt.queueItemId), bankNameDirectory); return <div className="history-row attempt-row" key={attempt.id}><div><div className="attempt-head"><strong>{formatDateTime(attempt.timestamp)}</strong><span className="attempt-badge" data-result={attempt.result}>{t('statuses.' + attempt.result)}</span><small>{t('common.attempts')}: {attempt.attemptNumber}</small><small className="attempt-id" dir="ltr" title={attempt.queueItemId}>{attempt.queueItemId.slice(0, 8)}</small></div>{tweet.label ? <p className="attempt-tweet" dir="auto" title={tweet.label}>{tweet.label}</p> : <p className="attempt-tweet muted">{t('sessions.noTweetInfo')}</p>}<div className="attempt-meta">{tweet.bankName && <span className="stat-chip" title={t('sessions.bank')}>{tweet.bankName}</span>}{tweet.position !== undefined && <span className="stat-chip">{t('sessions.position')}: {tweet.position}</span>}{attempt.durationMs !== undefined && <span className="stat-chip">{t('sessions.duration')}: {Math.max(1, Math.round(attempt.durationMs / 1000))} {t('units.seconds')}</span>}{attempt.action && <span className="stat-chip">{attempt.action}</span>}</div><div className="attempt-links">{(attempt.sourceUrl ?? attempt.link) && <a className="secondary-link" href={attempt.sourceUrl ?? attempt.link} target="_blank" rel="noreferrer">{t('sessions.sourceLink')}</a>}{attempt.publishedPostUrl ? <><a className="primary-link" href={attempt.publishedPostUrl} target="_blank" rel="noreferrer">{t('sessions.publishedLink')}</a><button className="link-action" onClick={() => void copyText(attempt.publishedPostUrl!)}>{t('history.copyLink')}</button></> : attempt.result === 'PUBLISHED' || attempt.result === 'PUBLISHED_UNVERIFIED' ? <small className="muted">{t('sessions.publishedLinkUnavailable')}</small> : null}</div>{attempt.error && <small className="error-text">{getUserFacingMessage(attempt.error)}</small>}</div></div>; })}{!attempts.length && <p className="empty-list-state">{t('history.noMatch')}</p>}</div></article>; })}{!visibleSessions.length && <p className="empty-list-state">{t('sessions.noMatch')}</p>}</section>
     </section>}
 
     {activeTab === 'analytics' && <AnalyticsTab global={globalAnalytics} workspace={workspaceAnalytics} workspaceRows={allWorkspaceAnalytics} workspaces={workspaces} selectedWorkspaceId={analyticsWorkspaceId} onWorkspaceChange={setAnalyticsWorkspaceId} onExportCsv={exportAnalyticsCsv} />}

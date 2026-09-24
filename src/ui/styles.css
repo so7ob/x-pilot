@@ -414,6 +414,30 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .session-attempts h3 { margin: 0 0 4px; font-size: 12px; }
 .session-attempts .history-row { align-items: flex-start; }
 .session-attempts .primary-link, .session-attempts .secondary-link { display: inline-block; margin: 5px 8px 0 0; font-size: 11px; }
+/* --- Analytical session log --- */
+.session-analytics { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding: 10px; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-surface); }
+.success-rate { display: flex; align-items: center; gap: 8px; }
+.success-rate-track { position: relative; flex: 1; height: 6px; border-radius: 999px; background: var(--color-surface-3); overflow: hidden; }
+.success-rate-fill { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--color-success), var(--color-accent)); transition: width var(--transition-normal); }
+.success-rate-value { min-width: 38px; text-align: end; font-size: 12px; font-weight: 700; color: var(--color-text); }
+.success-rate-label { font-size: 11px; color: var(--color-text-3); white-space: nowrap; }
+.stat-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.stat-chip { display: inline-flex; align-items: center; max-width: 100%; padding: 2px 9px; border: 1px solid var(--color-border-subtle); border-radius: 999px; background: var(--color-surface-2); color: var(--color-text-2); font-size: 11px; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stat-chip.accent { border-color: #20b8d259; color: #0e8ba1; background: #20b8d214; }
+.stat-chip.warn { border-color: #d9770659; color: var(--color-warning); background: var(--color-warning-bg); }
+.attempt-row > div { display: flex; flex-direction: column; gap: 5px; }
+.attempt-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.attempt-head small { margin-top: 0; }
+.attempt-badge { display: inline-flex; align-items: center; padding: 1px 9px; border: 1px solid var(--color-border-subtle); border-radius: 999px; background: var(--color-surface-2); color: var(--color-text-2); font-size: 10.5px; font-weight: 700; white-space: nowrap; }
+.attempt-badge[data-result='PUBLISHED'] { border-color: #137b4b59; color: var(--color-success); background: var(--color-success-bg); }
+.attempt-badge[data-result='PUBLISHED_UNVERIFIED'] { border-color: #d9770659; color: var(--color-warning); background: var(--color-warning-bg); }
+.attempt-badge[data-result='FAILED'] { border-color: #dc262659; color: var(--color-danger); background: var(--color-danger-bg); }
+.attempt-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: var(--color-text-3); }
+.attempt-tweet { margin: 0; padding: 8px 10px; border-inline-start: 3px solid var(--color-accent); border-radius: var(--radius-sm); background: var(--color-surface-2); color: var(--color-text); font-size: 12.5px; line-height: 1.55; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.attempt-tweet.muted { border-inline-start-color: var(--color-border); color: var(--color-text-3); font-style: italic; }
+.attempt-meta { display: flex; flex-wrap: wrap; gap: 6px; }
+.attempt-links { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.attempt-links .primary-link, .attempt-links .secondary-link { display: inline-block; margin: 0; font-size: 11.5px; }
 .settings-card { display: grid; gap: 14px; }
 .settings-card > label { margin-top: 0; }
 .settings-card .publishing-windows-editor, .settings-card .profile-actions, .settings-card .backup-actions { margin-top: 0; padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-2); }
@@ -574,6 +598,13 @@ h2, h3 { text-wrap: balance; }
   .backup-consent { border-color: #304157; border-inline-start-color: #3d8ce0; background: #16222f; }
   .backup-consent:hover { border-color: #3d5a80; }
   .backup-consent .check input:focus-visible { outline-color: #6fa9ef; }
+  .session-analytics { border-color: #26364b; background: #131e2b; }
+  .stat-chip.accent { border-color: #20b8d24d; color: #4cc9de; background: #20b8d21a; }
+  .stat-chip.warn { border-color: #6b5524; color: #e0a94e; background: #2a2312; }
+  .attempt-badge[data-result='PUBLISHED'] { border-color: #2b5c42; color: #4ade80; background: #12271c; }
+  .attempt-badge[data-result='PUBLISHED_UNVERIFIED'] { border-color: #6b5524; color: #e0a94e; background: #2a2312; }
+  .attempt-badge[data-result='FAILED'] { border-color: #6b2f2c; color: #f08484; background: #2c1715; }
+  .attempt-tweet { background: #16222f; }
 }
 
 footer { margin: 18px 2px 6px; }
