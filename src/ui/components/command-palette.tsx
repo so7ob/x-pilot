@@ -9,6 +9,8 @@ export type CommandPaletteProps = {
   placeholder: string;
   emptyLabel: string;
   footerHints: { navigate: string; run: string; close: string };
+  /** Shown as the leading group while the query is empty (stale ids ignored). */
+  recent?: { ids: string[]; label: string };
   onRun: (command: PaletteCommand) => void;
   onClose: () => void;
 };
@@ -16,14 +18,17 @@ export type CommandPaletteProps = {
 const NAVIGATION_KEYS = new Set(['ArrowDown', 'ArrowUp', 'Enter', 'Home', 'End']);
 
 /** Modal command palette: type-to-filter launcher with full keyboard control. */
-export function CommandPalette({ open, commands, groupLabels, placeholder, emptyLabel, footerHints, onRun, onClose }: CommandPaletteProps) {
+export function CommandPalette({ open, commands, groupLabels, placeholder, emptyLabel, footerHints, recent, onRun, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
 
   const filtered = useMemo(() => filterCommands(commands, query), [commands, query]);
-  const groups = useMemo(() => groupCommands(filtered, groupLabels), [filtered, groupLabels]);
+  const groups = useMemo(
+    () => groupCommands(filtered, groupLabels, query.trim() ? undefined : recent),
+    [filtered, groupLabels, query, recent],
+  );
   // Flat list in visual order (group after group) for index-based navigation.
   const flat = useMemo(() => groups.flatMap((group) => group.commands), [groups]);
 
@@ -146,7 +151,7 @@ type GroupViewProps = {
 function PaletteGroupView({ group, activeIndex, flat, setActiveIndex, onRun }: GroupViewProps) {
   return (
     <>
-      <li className="command-palette-group-label" role="presentation">{group.label}</li>
+      <li className={`command-palette-group-label${group.kind === 'recent' ? ' command-palette-group-recent' : ''}`} role="presentation">{group.kind === 'recent' && <Icon name="clock" size={11} />}{group.label}</li>
       {group.commands.map((command) => {
         const index = flat.indexOf(command);
         const active = index === activeIndex;
