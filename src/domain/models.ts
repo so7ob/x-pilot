@@ -1,3 +1,5 @@
+import type { UiPreferencesBundle } from '../ui/services/ui-preferences-transfer.ts';
+
 export type QueueItemStatus = 'PENDING' | 'OPENING' | 'READY' | 'PUBLISHING' | 'PUBLISHED' | 'PUBLISHED_UNVERIFIED' | 'FAILED' | 'SKIPPED';
 export type SessionStatus = 'IDLE' | 'SCHEDULED' | 'RUNNING' | 'PAUSED' | 'STOPPED' | 'WAITING' | 'COMPLETED' | 'FAILED';
 export type FailureBehavior = 'CONTINUE' | 'PAUSE';
@@ -51,8 +53,8 @@ export type DryRunMode = 'FIRST_ITEM' | 'ENTIRE_QUEUE';
 export type DryRunSessionStatus = 'RUNNING' | 'COMPLETED' | 'STOPPED' | 'FAILED';
 export interface DryRunItemResult { queueItemId: string; position: number; targetUrl: string; status: DryRunItemStatus; checkedAt: number; durationMs: number; pageKind: ContentInspection['pageKind']; composerFound: boolean; contentPresent: boolean; postButtonFound: boolean; postButtonEnabled: boolean; reason?: string; error?: string; }
 export interface DryRunResult { id: string; workspaceId?: string; mode: DryRunMode; status: DryRunSessionStatus; startedAt: number; completedAt?: number; currentItemId?: string; total: number; checked: number; ready: number; failed: number; items: DryRunItemResult[]; error?: string; }
-export interface BackupEnvelope { format: 'x-pilot-backup'; formatVersion: 1 | 2; appVersion: string; createdAt: number; meta: AppMetaState; globalSettings?: Settings; workspaceSettings?: WorkspaceSettings[]; workspaces: WorkspaceState[]; sessionRecords?: AutomationSessionRecord[]; attempts?: PublishAttempt[]; }
-export interface BackupSummary { workspaceCount: number; bankCount: number; queueCount: number; historyCount: number; historicalSessionCount: number; createdAt: number; }
+export interface BackupEnvelope { format: 'x-pilot-backup'; formatVersion: 1 | 2 | 3; appVersion: string; createdAt: number; meta: AppMetaState; globalSettings?: Settings; workspaceSettings?: WorkspaceSettings[]; workspaces: WorkspaceState[]; sessionRecords?: AutomationSessionRecord[]; attempts?: PublishAttempt[]; uiPreferences?: UiPreferencesBundle | null; }
+export interface BackupSummary { workspaceCount: number; bankCount: number; queueCount: number; historyCount: number; historicalSessionCount: number; createdAt: number; hasUiPreferences?: boolean; }
 export interface BackupValidation { valid: boolean; summary?: BackupSummary; errors: string[]; }
 export type BulkQueueAction = 'DELETE' | 'SKIP' | 'RETRY' | 'RESET_PENDING' | 'MOVE_TOP' | 'MOVE_BOTTOM' | 'ASSIGN_BANK' | 'EXPORT';
 export interface BulkActionResult { action: BulkQueueAction; requestedIds: string[]; affectedIds: string[]; rejectedIds: string[]; activeItemId?: string; exportedItems?: QueueItem[]; }
@@ -72,7 +74,7 @@ export type RuntimeMessage =
   | { type: 'EXTRACT_BANK'; bankId?: string; bankUrl: string; workspaceId?: string; mode?: 'REPLACE' | 'APPEND' } | { type: 'REFRESH_BANK'; workspaceId?: string; bankId: string } | { type: 'GET_BANK_DIFF'; workspaceId?: string; bankId: string } | { type: 'ADD_DIFF_ITEMS'; workspaceId?: string; bankId: string; itemIds: string[] } | { type: 'DISCARD_BANK_DIFF'; workspaceId?: string; bankId: string }
   | { type: 'EXPORT_BANKS'; workspaceId?: string; bankIds: string[] } | { type: 'IMPORT_BANKS'; workspaceId?: string; payload: unknown }
   | { type: 'START'; confirmed?: boolean; workspaceId?: string } | { type: 'RECOVERY_START_OVER' } | { type: 'START_SCHEDULED_NOW' } | { type: 'SCHEDULE'; startAt: number; workspaceId?: string } | { type: 'RESCHEDULE'; startAt: number; workspaceId?: string } | { type: 'CANCEL_SCHEDULE'; workspaceId?: string } | { type: 'PAUSE'; workspaceId?: string } | { type: 'RESUME'; workspaceId?: string } | { type: 'STOP'; workspaceId?: string } | { type: 'DRY_RUN_FIRST'; workspaceId?: string } | { type: 'DRY_RUN_QUEUE'; workspaceId?: string } | { type: 'DRY_RUN_STOP' } | { type: 'GET_DRY_RUN' }
-  | { type: 'EXPORT_BACKUP' } | { type: 'VALIDATE_BACKUP'; backup: unknown } | { type: 'RESTORE_BACKUP'; backup: unknown; confirmed: boolean }
+  | { type: 'EXPORT_BACKUP'; includeUiPreferences?: boolean } | { type: 'VALIDATE_BACKUP'; backup: unknown } | { type: 'RESTORE_BACKUP'; backup: unknown; confirmed: boolean }
   | { type: 'SKIP_CURRENT' } | { type: 'RETRY_ITEM'; itemId: string } | { type: 'REORDER'; itemId: string; direction: 'up' | 'down' } | { type: 'DELETE_ITEM'; itemId: string } | { type: 'CLEAR_COMPLETED' } | { type: 'BULK_ACTION'; action: BulkQueueAction; itemIds: string[]; workspaceId?: string; bankId?: string; confirmed?: boolean } | { type: 'UPDATE_SETTINGS'; settings: Settings; workspaceId?: string };
 export type ContentMessage = { type: 'X_INSPECT' } | { type: 'X_PUBLISH' } | { type: 'X_GET_PUBLISHED_URL' };
 export interface ContentInspection { ok: boolean; pageKind: 'X' | 'LOGIN' | 'CHALLENGE' | 'ERROR' | 'UNKNOWN'; composerFound: boolean; contentPresent: boolean; postButtonFound: boolean; postButtonEnabled: boolean; reason?: string; dailyPostLimitReached?: boolean; }

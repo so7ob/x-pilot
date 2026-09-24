@@ -54,16 +54,190 @@ export function normalizeForMatch(term: string): string {
     .trim();
 }
 
-function commandMatches(command: PaletteCommand, normalizedQuery: string): boolean {
-  if (!normalizedQuery) return true;
-  const haystacks = [command.label, ...(command.keywords ?? [])].map(normalizeForMatch);
-  return haystacks.some((term) => term.includes(normalizedQuery));
+/**
+ * Normalizes a term for matching while remembering where every normalized
+ * character came from in the ORIGINAL string, so match positions can be
+ * highlighted without re-running lossy string surgery on the label.
+ * 1:1 folds (alef variants, teh marbuta, alef maqsura, Latin lowercase)
+ * keep one map entry per output char; marks/tatweel are dropped entirely.
+ */
+export function normalizeWithIndexMap(term: string): { normalized: string; map: number[] } {
+  const lowered = term.toLowerCase();
+  let normalized = '';
+  const map: number[] = [];
+  for (let i = 0; i < lowered.length; i++) {
+    const ch = lowered[i];
+    // Per-char membership check — a /g regex would carry stateful lastIndex.
+    const isMark = ch >= '\u064B' && ch <= '\u065F' || ch === '\u0670' || (ch >= '\u06D6' && ch <= '\u06ED') || ch === '\u0640';
+    if (isMark) continue;
+    let folded = ch;
+    if (ch === '\u0623' || ch === '\u0625' || ch === '\u0622' || ch === '\u0671') folded = '\u0627';
+    else if (ch === '\u0629') folded = '\u0647';
+    else if (ch === '\u0649') folded = '\u064A';
+    normalized += folded;
+    map.push(i);
+  }
+  // Trim leading/trailing whitespace from the OUTPUT, remapping accordingly.
+  const start = normalized.search(/\S/);
+  if (start === -1) return { normalized: '', map: [] };
+  let end = normalized.length;
+  while (end > start && /\s/.test(normalized[end - 1])) end--;
+  return { normalized: normalized.slice(start, end), map: map.slice(start, end) };
 }
 
-/** Filters commands by a user query (empty query returns everything). */
+export type MatchRanges = Array<[number, number]>;
+
+export type CommandMatch = {
+  matched: boolean;
+  /** Higher is better; 0 for the empty query (everything matches equally). */
+  score: number;
+  /** Highlight ranges in ORIGINAL label coordinates (empty for keyword matches). */
+  ranges: MatchRanges;
+};
+
+export const SCORE_EXACT = 1000;
+export const SCORE_PREFIX = 900;
+export const SCORE_WORD_START = 800;
+export const SCORE_LABEL_INCLUDES = 700;
+export const SCORE_KEYWORD_EXACT = 600;
+export const SCORE_KEYWORD_PREFIX = 550;
+export const SCORE_KEYWORD_INCLUDES = 500;
+export const SCORE_SUBSEQUENCE_BASE = 300;
+/** Minimum query length for loose subsequence matching (1-char queries stay exact). */
+export const SUBSEQUENCE_MIN_QUERY = 2;
+/** Bonus per extra consecutive matched char beyond the first. */
+export const SUBSEQUENCE_CONSECUTIVE_BONUS = 15;
+/** Penalty per skipped label char while walking the subsequence. */
+export const SUBSEQUENCE_GAP_PENALTY = 2;
+/** Floor for the subsequence score so gaps cannot sink below keyword matches. */
+export const SCORE_SUBSEQUENCE_FLOOR = 150;
+
+/** Characters that start a "word" for word-start matching. */
+const WORD_SEPARATORS = /[\s\-_:\u00b7|\u060c,]/;
+
+function mergeConsecutive(positions: number[]): MatchRanges {
+  const ranges: MatchRanges = [];
+  for (const position of positions) {
+    const last = ranges[ranges.length - 1];
+    if (last && position === last[1]) last[1] = position + 1;
+    else ranges.push([position, position + 1]);
+  }
+  return ranges;
+}
+
+/** Greedy in-order subsequence: returns normalized positions or null. */
+function subsequencePositions(normalizedLabel: string, query: string): number[] | null {
+  const positions: number[] = [];
+  let cursor = 0;
+  for (const ch of query) {
+    const found = normalizedLabel.indexOf(ch, cursor);
+    if (found === -1) return null;
+    positions.push(found);
+    cursor = found + 1;
+  }
+  return positions;
+}
+
+/**
+ * Label-only matching ladder: exact > prefix > word-start > includes >
+ * subsequence. Ranges are reported in ORIGINAL label coordinates through
+ * the index map. This is the single source of truth shared by command
+ * ranking and UI highlighting.
+ */
+export function matchLabel(label: string, normalizedQuery: string): { matched: boolean; score: number; ranges: MatchRanges } {
+  if (!normalizedQuery) return { matched: true, score: 0, ranges: [] };
+  const { normalized, map } = normalizeWithIndexMap(label);
+  const queryLength = [...normalizedQuery].length;
+  const toOriginal = (position: number): number => map[position] ?? position;
+  const mapRanges = (positions: number[]): MatchRanges => mergeConsecutive(positions.map(toOriginal));
+
+  if (normalized === normalizedQuery) return { matched: true, score: SCORE_EXACT, ranges: mapRanges(normalized.split('').map((_, i) => i)) };
+
+  if (normalized.startsWith(normalizedQuery)) {
+    const positions = [...normalizedQuery].map((_, i) => i);
+    return { matched: true, score: SCORE_PREFIX + Math.min(queryLength, 10), ranges: mapRanges(positions) };
+  }
+
+  const wordStart = [...normalized].findIndex((_, i) => i > 0 && WORD_SEPARATORS.test(normalized[i - 1]) && normalized.startsWith(normalizedQuery, i));
+  if (wordStart > 0) {
+    const positions = Array.from({ length: queryLength }, (_, i) => wordStart + i);
+    return { matched: true, score: SCORE_WORD_START + Math.min(queryLength, 10), ranges: mapRanges(positions) };
+  }
+
+  const includesAt = normalized.indexOf(normalizedQuery);
+  if (includesAt !== -1) {
+    const positions = Array.from({ length: queryLength }, (_, i) => includesAt + i);
+    return { matched: true, score: SCORE_LABEL_INCLUDES - Math.min(includesAt, 100), ranges: mapRanges(positions) };
+  }
+
+  if (queryLength >= SUBSEQUENCE_MIN_QUERY) {
+    const positions = subsequencePositions(normalized, normalizedQuery);
+    if (positions) {
+      let consecutiveBonus = 0;
+      let gapPenalty = 0;
+      for (let i = 1; i < positions.length; i++) {
+        if (positions[i] === positions[i - 1] + 1) consecutiveBonus += SUBSEQUENCE_CONSECUTIVE_BONUS;
+        else gapPenalty += (positions[i] - positions[i - 1] - 1) * SUBSEQUENCE_GAP_PENALTY;
+      }
+      const score = Math.max(SCORE_SUBSEQUENCE_FLOOR, SCORE_SUBSEQUENCE_BASE + consecutiveBonus - gapPenalty);
+      return { matched: true, score, ranges: mapRanges(positions) };
+    }
+  }
+
+  return { matched: false, score: 0, ranges: [] };
+}
+
+/** Scores one command against the query (keyword matches carry no label ranges). */
+export function matchCommand(command: PaletteCommand, query: string): CommandMatch {
+  const rawQuery = query.trim();
+  const normalizedQuery = normalizeForMatch(rawQuery);
+  if (!normalizedQuery) return { matched: true, score: 0, ranges: [] };
+  const labelMatch = matchLabel(command.label, normalizedQuery);
+  if (labelMatch.matched) return labelMatch;
+  // Keywords: exact > prefix > includes. No ranges — the label did not match,
+  // so highlighting it would be dishonest.
+  for (const keyword of command.keywords ?? []) {
+    const normalizedKeyword = normalizeForMatch(keyword);
+    if (!normalizedKeyword) continue;
+    if (normalizedKeyword === normalizedQuery) return { matched: true, score: SCORE_KEYWORD_EXACT, ranges: [] };
+    if (normalizedKeyword.startsWith(normalizedQuery)) return { matched: true, score: SCORE_KEYWORD_PREFIX, ranges: [] };
+    if (normalizedKeyword.includes(normalizedQuery)) return { matched: true, score: SCORE_KEYWORD_INCLUDES, ranges: [] };
+  }
+  return { matched: false, score: 0, ranges: [] };
+}
+
+/**
+ * Filters commands by a user query and RANKS the survivors best-first
+ * (stable sort keeps the builder order for equal scores). Empty query
+ * returns everything in the original order.
+ */
 export function filterCommands(commands: PaletteCommand[], query: string): PaletteCommand[] {
-  const normalizedQuery = normalizeForMatch(query);
-  return commands.filter((command) => commandMatches(command, normalizedQuery));
+  const scored = commands
+    .map((command) => ({ command, match: matchCommand(command, query) }))
+    .filter((entry) => entry.match.matched);
+  scored.sort((a, b) => b.match.score - a.match.score);
+  return scored.map((entry) => entry.command);
+}
+
+export type HighlightSegment = { text: string; highlighted: boolean };
+
+/** Splits a label into non-overlapping render segments for the UI. */
+export function buildHighlightSegments(label: string, query: string): HighlightSegment[] {
+  const rawQuery = query.trim();
+  if (!rawQuery) return [{ text: label, highlighted: false }];
+  const normalizedQuery = normalizeForMatch(rawQuery);
+  if (!normalizedQuery) return [{ text: label, highlighted: false }];
+  const { ranges } = matchLabel(label, normalizedQuery);
+  if (!ranges.length) return [{ text: label, highlighted: false }];
+  const segments: HighlightSegment[] = [];
+  let cursor = 0;
+  for (const [start, end] of ranges) {
+    if (start > cursor) segments.push({ text: label.slice(cursor, start), highlighted: false });
+    segments.push({ text: label.slice(start, end), highlighted: true });
+    cursor = Math.max(cursor, end);
+  }
+  if (cursor < label.length) segments.push({ text: label.slice(cursor), highlighted: false });
+  return segments.filter((segment) => segment.text.length > 0);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon, type IconName } from '../components';
-import { filterCommands, groupCommands, type PaletteCommand, type PaletteGroup, type PaletteCommandKind } from '../services/command-palette';
+import { buildHighlightSegments, filterCommands, groupCommands, type PaletteCommand, type PaletteGroup, type PaletteCommandKind } from '../services/command-palette';
 
 export type CommandPaletteProps = {
   open: boolean;
@@ -127,7 +127,7 @@ export function CommandPalette({ open, commands, groupLabels, placeholder, empty
           <button type="button" className="command-palette-esc" onClick={onClose} aria-label={footerHints.close}>esc</button>
         </div>
         <ul className="command-palette-list" id="command-palette-list" role="listbox" ref={listRef}>
-          {groups.map((group) => <PaletteGroupView key={group.kind} group={group} activeIndex={activeIndex} setActiveIndex={setActiveIndex} onRun={onRun} flat={flat} />)}
+          {groups.map((group) => <PaletteGroupView key={group.kind} group={group} activeIndex={activeIndex} setActiveIndex={setActiveIndex} onRun={onRun} flat={flat} query={query} />)}
           {!flat.length && <li className="command-palette-empty" role="option" aria-selected={false} aria-disabled="true">{emptyLabel}</li>}
         </ul>
         <footer className="command-palette-footer" aria-hidden="true">
@@ -146,9 +146,11 @@ type GroupViewProps = {
   flat: PaletteCommand[];
   setActiveIndex: (index: number) => void;
   onRun: (command: PaletteCommand) => void;
+  /** Non-empty query turns matching label substrings into highlight segments. */
+  query: string;
 };
 
-function PaletteGroupView({ group, activeIndex, flat, setActiveIndex, onRun }: GroupViewProps) {
+function PaletteGroupView({ group, activeIndex, flat, setActiveIndex, onRun, query }: GroupViewProps) {
   return (
     <>
       <li className={`command-palette-group-label${group.kind === 'recent' ? ' command-palette-group-recent' : ''}`} role="presentation">{group.kind === 'recent' && <Icon name="clock" size={11} />}{group.label}</li>
@@ -168,7 +170,11 @@ function PaletteGroupView({ group, activeIndex, flat, setActiveIndex, onRun }: G
             onClick={() => onRun(command)}
           >
             <span className="command-palette-item-icon" aria-hidden="true">{command.icon ? <Icon name={command.icon as IconName} size={15} /> : null}</span>
-            <span className="command-palette-item-label" dir="auto">{command.label}</span>
+            <span className="command-palette-item-label" dir="auto">
+              {buildHighlightSegments(command.label, query).map((segment, segmentIndex) => segment.highlighted
+                ? <mark key={segmentIndex} className="command-palette-item-hl">{segment.text}</mark>
+                : <span key={segmentIndex}>{segment.text}</span>)}
+            </span>
             {command.hint && <kbd className="command-palette-item-hint">{command.hint}</kbd>}
           </li>
         );

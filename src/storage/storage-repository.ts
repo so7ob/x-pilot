@@ -2,6 +2,7 @@ import type { AppMetaState, AppMetadata, AppState, AutomationSession, Automation
 import { CURRENT_SCHEMA_VERSION, getMigrationPath, validateMigrationRegistry } from './migrations.ts';
 import { timedStorageOperation } from './storage-performance.ts';
 import { normalizeWorkspaceState } from '../domain/data-integrity.ts';
+import { UI_PREFERENCE_KEYS, collectUiPreferences, sanitizeUiPreferencesBundle, uiPreferenceWrites } from '../ui/services/ui-preferences-transfer.ts';
 
 const defaultSettings: Settings = { intervalMinutes: 2, maxRetries: 2, failureBehavior: 'CONTINUE', confirmBeforeStart: true, keepAutomationTabOpen: true, closeTabOnComplete: false, duplicatePolicy: 'BLOCK', publishingWindows: [], timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', notificationsEnabled: true, badgeMode: 'COUNT' };
 
@@ -431,12 +432,16 @@ function backupSummary(backup: BackupEnvelope): BackupSummary {
     historyCount: backup.workspaces.reduce((count, state) => count + state.history.length, 0),
     historicalSessionCount: backup.workspaces.reduce((count, state) => count + (state.historicalSessions?.length ?? 0), 0),
     createdAt: backup.createdAt,
+    hasUiPreferences: sanitizeUiPreferencesBundle(backup.uiPreferences) !== null,
   };
 }
 
-export async function exportBackup(): Promise<BackupEnvelope> {
+export async function exportBackup(includeUiPreferences = false): Promise<BackupEnvelope> {
   const meta = await getMeta();
   const workspaces = await Promise.all(meta.workspaceOrder.map((id) => getWorkspaceState(id)));
+  // UI preferences are included ONLY on explicit user consent; without it the
+  // envelope stays formatVersion 2 and carries no uiPreferences field at all.
+  const uiPreferences = includeUiPreferences ? await collectUiPreferences(chrome.storage.local) : null;
   const workspaceSettings = await Promise.all(meta.workspaceOrder.map(async (id) => {
     const result = await chrome.storage.local.get(v4WorkspaceSettingsKey(id));
     return (result[v4WorkspaceSettingsKey(id)] as WorkspaceSettings | undefined) ?? { workspaceId: id, overrides: {}, createdAt: Date.now(), updatedAt: Date.now() };
@@ -444,8 +449,9 @@ export async function exportBackup(): Promise<BackupEnvelope> {
   const attempts = workspaces.flatMap((state) => state.history.map((attempt) => toV4Attempt(attempt, state.workspaceId)));
   const sessionRecords = workspaces.flatMap((state) => (state.historicalSessions ?? []).map((session) => ({ ...session, timezone: (meta.globalSettings.timezone ?? 'UTC') })));
   return {
-    format: 'x-pilot-backup', formatVersion: 2, appVersion: chrome.runtime?.getManifest?.().version ?? '0.18.0', createdAt: Date.now(),
+    format: 'x-pilot-backup', formatVersion: uiPreferences ? 3 : 2, appVersion: chrome.runtime?.getManifest?.().version ?? '0.18.0', createdAt: Date.now(),
     meta: { ...meta, schemaVersion: 4, automationWorkspaceId: undefined }, globalSettings: meta.globalSettings, workspaceSettings, sessionRecords, attempts,
+    ...(uiPreferences ? { uiPreferences } : {}),
     workspaces: workspaces.map((state) => ({
       ...state,
       session: null,
@@ -458,7 +464,9 @@ export function validateBackup(input: unknown): BackupValidation {
   const errors: string[] = [];
   const backup = input as Partial<BackupEnvelope> | null;
   if (!backup || backup.format !== 'x-pilot-backup') errors.push('INVALID_BACKUP_FORMAT');
-  if (backup?.formatVersion !== 1 && backup?.formatVersion !== 2) errors.push('UNSUPPORTED_BACKUP_VERSION');
+  if (backup?.formatVersion !== 1 && backup?.formatVersion !== 2 && backup?.formatVersion !== 3) errors.push('UNSUPPORTED_BACKUP_VERSION');
+  if (backup?.uiPreferences != null && backup.formatVersion !== 3) errors.push('INVALID_UI_PREFERENCES');
+  if (backup?.uiPreferences != null && backup.formatVersion === 3 && !sanitizeUiPreferencesBundle(backup.uiPreferences)) errors.push('INVALID_UI_PREFERENCES');
   if (!backup?.meta || ![3, 4].includes(backup.meta.schemaVersion) || !Array.isArray(backup.meta.workspaceOrder)) errors.push('INVALID_BACKUP_META');
   if (!Array.isArray(backup?.workspaces) || backup.workspaces.length === 0) errors.push('BACKUP_HAS_NO_WORKSPACES');
   const workspaces = Array.isArray(backup?.workspaces) ? backup.workspaces as WorkspaceState[] : [];
@@ -485,6 +493,11 @@ export async function restoreBackup(input: unknown, confirmed: boolean): Promise
   if (!validation.valid || !validation.summary) throw new Error(`INVALID_BACKUP:${validation.errors.join(',')}`);
   const backup = input as BackupEnvelope;
   const currentMeta = await getMeta();
+  // UI preferences ride the SAME Stage → Verify → Commit → Rollback path as
+  // every other key. When the envelope carries no (valid) preferences the
+  // local preference keys are never read, written, or removed.
+  const trustedPreferences = sanitizeUiPreferencesBundle(backup.uiPreferences);
+  const preferenceKeys: readonly string[] = trustedPreferences ? UI_PREFERENCE_KEYS : [];
   const transactionId = crypto.randomUUID();
   const stagingPrefix = `${RESTORE_STAGING_PREFIX}${transactionId}:`;
   const cleanup = async () => {
@@ -507,7 +520,8 @@ export async function restoreBackup(input: unknown, confirmed: boolean): Promise
       writes[v4SessionsKey(state.workspaceId)] = sessionsByWorkspace.get(state.workspaceId) ?? state.historicalSessions ?? [];
       writes[v4AttemptsKey(state.workspaceId)] = attemptsByWorkspace.get(state.workspaceId) ?? state.history.map((attempt) => toV4Attempt(attempt, state.workspaceId));
     }
-    const previousKeys = [...currentMeta.workspaceOrder.flatMap((id) => [v4WorkspaceKey(id), v4WorkspaceSettingsKey(id), v4BankKey(id), v4QueueKey(id), v4SessionsKey(id), v4AttemptsKey(id)]), V4_META_KEY, V4_GLOBAL_SETTINGS_KEY, V4_RUNTIME_KEY];
+    if (trustedPreferences) Object.assign(writes, uiPreferenceWrites(trustedPreferences));
+    const previousKeys = [...currentMeta.workspaceOrder.flatMap((id) => [v4WorkspaceKey(id), v4WorkspaceSettingsKey(id), v4BankKey(id), v4QueueKey(id), v4SessionsKey(id), v4AttemptsKey(id)]), V4_META_KEY, V4_GLOBAL_SETTINGS_KEY, V4_RUNTIME_KEY, ...preferenceKeys];
     const previous = await chrome.storage.local.get(previousKeys);
     const staged = Object.fromEntries(Object.entries(writes).map(([key, value]) => [`${stagingPrefix}${key}`, value]));
     await chrome.storage.local.set({ [stagingPrefix + 'manifest']: { transactionId, keys: Object.keys(writes), createdAt: Date.now() }, ...staged });
@@ -529,7 +543,8 @@ export async function restoreBackup(input: unknown, confirmed: boolean): Promise
     const currentKeys = currentMeta.workspaceOrder.map(workspaceKey);
     const nextStates = backup.workspaces.map((state) => ({ ...state, session: null }));
     const writes = { ...Object.fromEntries(nextStates.map((state) => [workspaceKey(state.workspaceId), state])), [META_KEY]: { ...backup.meta, automationWorkspaceId: undefined } };
-    const previous = await chrome.storage.local.get([...currentKeys, META_KEY]);
+    if (trustedPreferences) Object.assign(writes, uiPreferenceWrites(trustedPreferences));
+    const previous = await chrome.storage.local.get([...currentKeys, META_KEY, ...preferenceKeys]);
     const staged = Object.fromEntries(Object.entries(writes).map(([key, value]) => [`${stagingPrefix}${key}`, value]));
     await chrome.storage.local.set({ [stagingPrefix + 'manifest']: { transactionId, keys: Object.keys(writes), createdAt: Date.now() }, ...staged });
     const stagedRead = await chrome.storage.local.get(Object.keys(staged));
@@ -541,11 +556,11 @@ export async function restoreBackup(input: unknown, confirmed: boolean): Promise
       await cleanup();
     } catch (error) {
       const rollback: Record<string, unknown> = {};
-      for (const key of [...currentKeys, META_KEY]) if (previous[key] !== undefined) rollback[key] = previous[key];
+      for (const key of [...currentKeys, META_KEY, ...preferenceKeys]) if (previous[key] !== undefined) rollback[key] = previous[key];
       await chrome.storage.local.set(rollback);
       throw error;
     }
-    await chrome.storage.local.remove([...currentKeys, META_KEY].filter((key) => !(key in writes)));
+    await chrome.storage.local.remove([...currentKeys, META_KEY, ...preferenceKeys].filter((key) => !(key in writes)));
   }
   return validation.summary;
 }
