@@ -7,6 +7,7 @@ const root = path.resolve(new URL('..', import.meta.url).pathname);
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'public/manifest.json'), 'utf8'));
 const serviceWorker = fs.readFileSync(path.join(root, 'src/background/service-worker.ts'), 'utf8');
+const engineSource = fs.readFileSync(path.join(root, 'src/background/automation-engine.ts'), 'utf8');
 const contentEntry = fs.readFileSync(path.join(root, 'src/content/content-entry.ts'), 'utf8');
 const contentAdapter = fs.readFileSync(path.join(root, 'src/content/providers/x-provider-adapter.ts'), 'utf8');
 const content = `${contentEntry}\n${contentAdapter}`;
@@ -48,10 +49,10 @@ test('manifest declares the persistent workflow APIs', () => {
 
 test('daily X posting limit pauses the session without advancing the Queue', () => {
   assert.match(models, /dailyPostLimitReached\?: boolean/);
-  assert.match(serviceWorker, /X_DAILY_POST_LIMIT_REACHED/);
-  assert.match(serviceWorker, /status: 'PAUSED', currentItemId: item\.id, nextRunAt: undefined/);
-  assert.match(serviceWorker, /status: 'PENDING', attempts: item\.attempts/);
-  assert.match(serviceWorker, /chrome\.alarms\.clear\(ALARM_NAME\)/);
+  assert.match(engineSource, /X_DAILY_POST_LIMIT_REACHED/);
+  assert.match(engineSource, /status: 'PAUSED', currentItemId: item\.id, nextRunAt: undefined/);
+  assert.match(engineSource, /status: 'PENDING', attempts: item\.attempts/);
+  assert.match(engineSource, /chrome\.alarms\.clear\(ALARM_NAME\)/);
 });
 
 test('manifest declares official X-Pilot icon assets', () => {
@@ -91,7 +92,7 @@ test('Unified activity records preserve source and published post links', () => 
   assert.match(models, /sourceUrl\?: string/);
   assert.match(content, /X_GET_PUBLISHED_URL/);
   assert.match(contentAdapter, /getPublishedPostUrl/);
-  assert.match(serviceWorker, /publishedPostUrl/);
+  assert.match(engineSource, /publishedPostUrl/);
   assert.match(uiSource, /sessions\.publishedLink/);
   assert.match(uiSource, /sessions\.sourceLink/);
 });
@@ -99,7 +100,7 @@ test('Unified activity records preserve source and published post links', () => 
 test('operation tab includes current-tweet information and existing controls', () => {
   assert.match(uiSource, /export function CurrentTweetCard/);
   assert.match(uiSource, /CurrentTweetCard/);
-  assert.match(uiSource, /getTweetPreview\(item\.targetUrl, item\.label, 180\)/);
+  assert.match(uiSource, /getTweetPreview\(item\.targetUrl, item\.label \|\| t\('common\.unlabeledPost'\), 180\)/);
   assert.match(uiSource, /aria-label=\{t\('nav\.operation'\)\}/);
   assert.match(uiSource, /onClick=\{start\}/);
   assert.match(uiSource, /type: 'PAUSE'/);
@@ -108,12 +109,12 @@ test('operation tab includes current-tweet information and existing controls', (
 });
 
 test('Service Worker exposes live engine and automation-tab connectivity status', () => {
-  assert.match(serviceWorker, /async function getRuntimeStatus\(\): Promise<RuntimeStatus>/);
+  assert.match(engineSource, /async function getRuntimeStatus\(\): Promise<RuntimeStatus>/);
   assert.match(serviceWorker, /case 'GET_RUNTIME_STATUS': return getRuntimeStatus\(\)/);
-  assert.match(serviceWorker, /connection: 'NOT_REQUIRED'/);
-  assert.match(serviceWorker, /connection: 'CONNECTED'/);
-  assert.match(serviceWorker, /connection: 'DISCONNECTED'/);
-  assert.match(serviceWorker, /await chrome\.tabs\.get\(session\.automationTabId\)/);
+  assert.match(engineSource, /connection: 'NOT_REQUIRED'/);
+  assert.match(engineSource, /connection: 'CONNECTED'/);
+  assert.match(engineSource, /connection: 'DISCONNECTED'/);
+  assert.match(engineSource, /await chrome\.tabs\.get\(session\.automationTabId\)/);
 });
 
 test('Dry Run exposes both modes and does not use the publish action', () => {
@@ -147,12 +148,12 @@ test('Phase 2 exposes persistent scheduling, profiles, notifications, and Badge 
   assert.match(models, /CANCEL_SCHEDULE/);
   assert.match(models, /publishingWindows/);
   assert.match(models, /badgeMode/);
-  assert.match(serviceWorker, /SCHEDULE_ALARM_NAME/);
-  assert.match(serviceWorker, /chrome\.alarms\.create\(SCHEDULE_ALARM_NAME/);
-  assert.match(serviceWorker, /getNextAllowedPublishingTime/);
-  assert.match(serviceWorker, /chrome\.notifications\.create/);
-  assert.match(serviceWorker, /فشل عنصر/);
-  assert.match(serviceWorker, /chrome\.action\.setBadgeText/);
+  assert.match(engineSource, /SCHEDULE_ALARM_NAME/);
+  assert.match(engineSource, /chrome\.alarms\.create\(SCHEDULE_ALARM_NAME/);
+  assert.match(engineSource, /getNextAllowedPublishingTime/);
+  assert.match(engineSource, /chrome\.notifications\.create/);
+  assert.match(engineSource, /فشل عنصر/);
+  assert.match(engineSource, /chrome\.action\.setBadgeText/);
   assert.match(uiSource, /ui\.schedule/);
   assert.match(uiSource, /ui\.reschedule/);
   assert.match(uiSource, /PublishingWindowsEditor/);
@@ -169,19 +170,19 @@ test('Dry Run results show item number and preview without exposing target URLs'
 });
 
 test('Scheduled Alarm creates a session when Queue has no prior session and reports empty Queue', () => {
-  assert.match(serviceWorker, /current\.session \?\? \{/);
-  assert.match(serviceWorker, /status: 'SCHEDULED'/);
-  assert.match(serviceWorker, /لا يوجد عنصر Queue قابل للتشغيل/);
-  assert.match(serviceWorker, /handleScheduledStart/);
+  assert.match(engineSource, /current\.session \?\? \{/);
+  assert.match(engineSource, /status: 'SCHEDULED'/);
+  assert.match(engineSource, /لا يوجد عنصر Queue قابل للتشغيل/);
+  assert.match(engineSource, /handleScheduledStart/);
 });
 
 test('Preflight automatically opens X and inspects readiness without publishing', () => {
-  assert.match(serviceWorker, /async function performPreflight/);
-  assert.match(serviceWorker, /state\.queue\.find\(\(item\) => canStartItem\(item\.status\)/);
-  assert.match(serviceWorker, /chrome\.tabs\.create\(\{ url: 'about:blank', active: false \}\)/);
-  assert.match(serviceWorker, /chrome\.tabs\.update\(temporary\.id, \{ url: targetUrl, active: false \}\)/);
-  assert.match(serviceWorker, /await waitForTabLoad\(temporary\.id\)/);
-  assert.match(serviceWorker, /xInspection = await inspectTab\(temporary\.id\)/);
+  assert.match(engineSource, /async function performPreflight/);
+  assert.match(engineSource, /state\.queue\.find\(\(item\) => canStartItem\(item\.status\)/);
+  assert.match(engineSource, /chrome\.tabs\.create\(\{ url: 'about:blank', active: false \}\)/);
+  assert.match(engineSource, /chrome\.tabs\.update\(temporary\.id, \{ url: targetUrl, active: false \}\)/);
+  assert.match(engineSource, /await waitForTabLoad\(temporary\.id\)/);
+  assert.match(engineSource, /xInspection = await inspectTab\(temporary\.id\)/);
   assert.match(serviceWorker, /finally \{\s*if \(temporaryTabId !== undefined\) await chrome\.tabs\.remove/);
   assert.match(uiSource, /preflight\.pressCheck/);
   assert.match(uiSource, /className="preflight-icon"/);
@@ -220,10 +221,10 @@ test('Feature 14 exposes all Bulk Queue actions with active-item protection', ()
 });
 
 test('Individual Queue mutations persist, broadcast, and clear stale selection after deletion', () => {
-  assert.match(serviceWorker, /async function commitQueueMutation/);
+  assert.match(engineSource, /async function commitQueueMutation/);
   assert.match(serviceWorker, /case 'DELETE_ITEM': return commitQueueMutation/);
   assert.match(serviceWorker, /case 'REORDER': return commitQueueMutation/);
-  assert.match(serviceWorker, /await broadcast\(next\)/);
+  assert.match(engineSource, /await broadcast\(next\)/);
   assert.match(uiSource, /const queueAction = async/);
   assert.match(uiSource, /message\.type === 'DELETE_ITEM'/);
   assert.match(uiSource, /onAction=\{queueAction\}/);
@@ -231,11 +232,11 @@ test('Individual Queue mutations persist, broadcast, and clear stale selection a
 
 test('Start creates a session when missing and automation-tab failure cannot leave an item stuck', () => {
   assert.match(serviceWorker, /case 'START':/);
-  assert.match(serviceWorker, /const firstItem = current\.queue\.find\(\(item\) => canStartItem\(item\.status\)/);
-  assert.match(serviceWorker, /const session(?:: AutomationSession)? = current\.session \?\? \{/);
+  assert.match(engineSource, /const firstItem = current\.queue\.find\(\(item\) => canStartItem\(item\.status\)/);
+  assert.match(engineSource, /const session(?:: AutomationSession)? = current\.session \?\? \{/);
   assert.match(serviceWorker, /let tabId: number \| undefined/);
-  assert.match(serviceWorker, /tabId = await getOrCreateAutomationTab\(session\)/);
-  assert.match(serviceWorker, /const failedStatus = exhausted \? 'FAILED' : 'PENDING'/);
+  assert.match(engineSource, /tabId = await getOrCreateAutomationTab\(session\)/);
+  assert.match(engineSource, /const failedStatus = exhausted \? 'FAILED' : 'PENDING'/);
 });
 
 test('Feature 15 exposes derived Workspace and global Analytics Dashboard metrics', () => {
@@ -255,7 +256,7 @@ test('Feature 16 exposes a read-only Diagnostics Center with no publish path', (
   assert.match(models, /DiagnosticsCheckStatus/);
   assert.match(models, /RUN_DIAGNOSTICS/);
   assert.match(serviceWorker, /async function runDiagnostics/);
-  assert.match(serviceWorker, /X_INSPECT/);
+  assert.match(engineSource, /X_INSPECT/);
   assert.match(serviceWorker, /finally/);
   assert.match(serviceWorker, /DIAGNOSTICS_INSPECTION_FAILED/);
   assert.doesNotMatch(serviceWorker.slice(serviceWorker.indexOf('async function runDiagnostics'), serviceWorker.indexOf('function classifyDryRunInspection')), /X_PUBLISH|processCurrentItem|START/);
@@ -276,29 +277,29 @@ test('tab bar renders accessible live connection and engine indicators', () => {
 });
 
 test('failed Continue path schedules the next item and its countdown alarm', () => {
-  assert.match(serviceWorker, /const nextRunAt = !exhausted \|\| nextItem \?/);
-  assert.match(serviceWorker, /nextItem \? 'WAITING'/);
-  assert.match(serviceWorker, /if \(nextRunAt\) await chrome\.alarms\.create/);
+  assert.match(engineSource, /const nextRunAt = !exhausted \|\| nextItem \?/);
+  assert.match(engineSource, /nextItem \? 'WAITING'/);
+  assert.match(engineSource, /if \(nextRunAt\) await chrome\.alarms\.create/);
 });
 
 test('Pause clears the active alarm and Resume recreates a waiting alarm', () => {
-  assert.match(serviceWorker, /case 'PAUSE': \{[\s\S]*chrome\.alarms\.clear\(ALARM_NAME\)/);
-  assert.match(serviceWorker, /const nextRunAt = current\.session\.nextRunAt/);
-  assert.match(serviceWorker, /const hasFutureAlarm = Boolean\(nextRunAt/);
-  assert.match(serviceWorker, /if \(hasFutureAlarm && nextRunAt\) \{[\s\S]*chrome\.alarms\.create\(ALARM_NAME/);
+  assert.match(engineSource, /export async function pauseSession[\s\S]*?chrome\.alarms\.clear\(ALARM_NAME\)/);
+  assert.match(engineSource, /const nextRunAt = current\.session\.nextRunAt/);
+  assert.match(engineSource, /const hasFutureAlarm = Boolean\(nextRunAt/);
+  assert.match(engineSource, /if \(hasFutureAlarm && nextRunAt\) \{[\s\S]*?chrome\.alarms\.create\(ALARM_NAME/);
 });
 
 test('startup and install listeners both invoke persisted-state recovery', () => {
   assert.match(serviceWorker, /chrome\.runtime\.onStartup\.addListener\(\(\) => \{ void cleanupRestoreStaging\(\)\.then\(recoverPersistedState\)/);
   assert.match(serviceWorker, /chrome\.runtime\.onInstalled\.addListener\(\(\) => \{[\s\S]*void cleanupRestoreStaging\(\)\.then\(recoverPersistedState\)/);
   assert.match(serviceWorker, /startup recovery failed/);
-  assert.match(serviceWorker, /await chrome\.alarms\.clear\(ALARM_NAME\)/);
+  assert.match(engineSource, /await chrome\.alarms\.clear\(ALARM_NAME\)/);
 });
 
 test('v1.0 retains START exclusivity through lease renewal and explicit Workspace scopes', () => {
   assert.match(storage, /export async function renewStartLock/);
-  assert.match(serviceWorker, /renewStartLock\(startToken\)/);
-  assert.match(serviceWorker, /setInterval\(\(\) =>/);
+  assert.match(engineSource, /renewStartLock\(startToken\)/);
+  assert.match(engineSource, /setInterval\(\(\) =>/);
   assert.doesNotMatch(uiSource, /workspaceScopeMode|@active|filters\.activeWorkspace/);
   assert.match(uiSource, /value=\{filters\.workspaceId\}/);
   assert.match(uiSource, /setQueueFilters\(\{ \.\.\.emptySearchFilters, workspaceId \}\)/);
@@ -307,36 +308,36 @@ test('v1.0 retains START exclusivity through lease renewal and explicit Workspac
 });
 
 test('successful publish persists the next item before scheduling the wait', () => {
-  assert.match(serviceWorker, /const nextItem = getNextPendingItem\(\(await getState\(\)\)\.queue, item\.id\)/);
-  assert.match(serviceWorker, /currentItemId: nextItem\?\.id/);
-  assert.match(serviceWorker, /const nextStatus = nextItem \? 'WAITING' : 'COMPLETED'/);
-  assert.match(serviceWorker, /await chrome\.alarms\.clear\(ALARM_NAME\);\n    if \(nextRunAt\)/);
+  assert.match(engineSource, /const nextItem = getNextPendingItem\(\(await getState\(\)\)\.queue, item\.id\)/);
+  assert.match(engineSource, /currentItemId: nextItem\?\.id/);
+  assert.match(engineSource, /const nextStatus = nextItem \? 'WAITING' : 'COMPLETED'/);
+  assert.match(engineSource, /await chrome\.alarms\.clear\(ALARM_NAME\);\n    if \(nextRunAt\)/);
 });
 
 test('non-exhausted failures schedule a retry instead of recursively retrying', () => {
-  assert.match(serviceWorker, /const nextRunAt = !exhausted \|\| nextItem \?/);
-  assert.match(serviceWorker, /const nextStatus = exhausted && session\.failureBehavior === 'PAUSE' \? 'PAUSED' : nextItem \|\| !exhausted \? 'WAITING' : 'COMPLETED'/);
-  assert.match(serviceWorker, /const nextItemId = nextItem\?\.id \?\? \(!exhausted \? item\.id : undefined\)/);
+  assert.match(engineSource, /const nextRunAt = !exhausted \|\| nextItem \?/);
+  assert.match(engineSource, /const nextStatus = exhausted && session\.failureBehavior === 'PAUSE' \? 'PAUSED' : nextItem \|\| !exhausted \? 'WAITING' : 'COMPLETED'/);
+  assert.match(engineSource, /const nextItemId = nextItem\?\.id \?\? \(!exhausted \? item\.id : undefined\)/);
   assert.doesNotMatch(serviceWorker, /if \(nextStatus === 'RUNNING'\) await processCurrentItem\(\)/);
 });
 
 test('automation activates X before readiness polling and restores the previous tab', () => {
-  assert.match(serviceWorker, /chrome\.tabs\.query\(\{ active: true, lastFocusedWindow: true \}\)/);
-  assert.match(serviceWorker, /await chrome\.tabs\.update\(tabId, \{ url: item\.targetUrl, active: false \}\)/);
-  assert.match(serviceWorker, /await waitForTabLoad\(tabId\);\n    await activateAutomationTab\(tabId\)/);
-  assert.match(serviceWorker, /async function activateAutomationTab\(tabId: number\): Promise<void>/);
-  assert.match(serviceWorker, /await restoreActiveTab\(previousActiveTabId\)/);
-  assert.match(serviceWorker, /if \(tab\.status === 'complete'\) finish\(\)/);
+  assert.match(engineSource, /chrome\.tabs\.query\(\{ active: true, lastFocusedWindow: true \}\)/);
+  assert.match(engineSource, /await chrome\.tabs\.update\(tabId, \{ url: item\.targetUrl, active: false \}\)/);
+  assert.match(engineSource, /await waitForTabLoad\(tabId\);\n    await activateAutomationTab\(tabId\)/);
+  assert.match(engineSource, /export async function activateAutomationTab\(tabId: number\): Promise<void>/);
+  assert.match(engineSource, /await restoreActiveTab\(previousActiveTabId\)/);
+  assert.match(engineSource, /if \(tab\.status === 'complete'\) finish\(\)/);
 });
 
 test('content injection is guarded per tab and cleaned on tab lifecycle events', () => {
-  assert.match(serviceWorker, /const injectedContentTabs = new Set<number>\(\)/);
-  assert.match(serviceWorker, /const contentInjectionInFlight = new Map<number, Promise<void>>\(\)/);
-  assert.match(serviceWorker, /chrome\.tabs\.onUpdated\.addListener\(\(tabId, changeInfo\) => \{[\s\S]*injectedContentTabs\.delete\(tabId\)/);
-  assert.match(serviceWorker, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{[\s\S]*contentInjectionInFlight\.delete\(tabId\)/);
-  assert.match(serviceWorker, /async function ensureContentScript\(tabId: number\)/);
-  assert.match(serviceWorker, /if \(existing\) return existing/);
-  assert.match(serviceWorker, /await ensureContentScript\(tabId\)/);
+  assert.match(engineSource, /const injectedContentTabs = new Set<number>\(\)/);
+  assert.match(engineSource, /const contentInjectionInFlight = new Map<number, Promise<void>>\(\)/);
+  assert.match(engineSource, /chrome\.tabs\.onUpdated\.addListener\(\(tabId, changeInfo\) => \{[\s\S]*injectedContentTabs\.delete\(tabId\)/);
+  assert.match(engineSource, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{[\s\S]*contentInjectionInFlight\.delete\(tabId\)/);
+  assert.match(engineSource, /export async function ensureContentScript\(tabId: number\)/);
+  assert.match(engineSource, /if \(existing\) return existing/);
+  assert.match(engineSource, /await ensureContentScript\(tabId\)/);
 });
 
 test('content-entry installs only one runtime message listener per page', () => {
@@ -351,24 +352,24 @@ test('bank extraction always removes its temporary tab in finally', () => {
 });
 
 test('automation tab cleanup respects settings and clears persisted references', () => {
-  assert.match(serviceWorker, /async function closeAutomationTabIfConfigured\(session: AutomationSession\)/);
-  assert.match(serviceWorker, /session\.closeTabOnComplete \|\| !session\.keepAutomationTabOpen/);
+  assert.match(engineSource, /async function closeAutomationTabIfConfigured\(session: AutomationSession\)/);
+  assert.match(engineSource, /session\.closeTabOnComplete \|\| !session\.keepAutomationTabOpen/);
   assert.match(serviceWorker, /await chrome\.tabs\.remove\(tabId\)\.catch/);
-  assert.match(serviceWorker, /await chrome\.storage\.local\.remove\(AUTOMATION_TAB_KEY\)/);
-  assert.match(serviceWorker, /automationTabId: undefined/);
+  assert.match(engineSource, /await chrome\.storage\.local\.remove\(AUTOMATION_TAB_KEY\)/);
+  assert.match(engineSource, /automationTabId: undefined/);
 });
 
 test('manual automation-tab removal clears only the matching session reference', () => {
-  assert.match(serviceWorker, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{/);
-  assert.match(serviceWorker, /state\.session\?\.automationTabId !== tabId/);
-  assert.match(serviceWorker, /current\.session\?\.automationTabId === tabId/);
+  assert.match(engineSource, /chrome\.tabs\.onRemoved\.addListener\(\(tabId\) => \{/);
+  assert.match(engineSource, /state\.session\?\.automationTabId !== tabId/);
+  assert.match(engineSource, /current\.session\?\.automationTabId === tabId/);
 });
 
 test('stop and completion paths clean the configured automation tab', () => {
-  assert.match(serviceWorker, /case 'STOP': \{[\s\S]*closeAutomationTabIfConfigured/);
-  assert.match(serviceWorker, /const visibleState = nextStatus === 'COMPLETED' && nextState\.session/);
-  assert.match(serviceWorker, /const visibleState = completed\.session \? await closeAutomationTabIfConfigured/);
-  assert.match(serviceWorker, /if \(current\.session\?\.status !== 'RUNNING' \|\| latestItem\?\.operationId !== operationId\)/);
+  assert.match(engineSource, /export async function stopSession[\s\S]*?closeAutomationTabIfConfigured/);
+  assert.match(engineSource, /const visibleState = nextStatus === 'COMPLETED' && nextState\.session/);
+  assert.match(engineSource, /const visibleState = completed\.session \? await closeAutomationTabIfConfigured/);
+  assert.match(engineSource, /if \(current\.session\?\.status !== 'RUNNING' \|\| latestItem\?\.operationId !== operationId\)/);
 });
 
 test('Workspace domain model includes independent entities and ownership metadata', () => {
@@ -394,7 +395,7 @@ test('Workspace runtime operations expose explicit ownership and management APIs
   assert.match(storage, /export async function claimAutomationOwner/);
   assert.match(storage, /AUTOMATION_OWNED_BY_OTHER_WORKSPACE/);
   assert.match(storage, /export async function releaseAutomationOwner/);
-  assert.match(serviceWorker, /await claimAutomationOwner\(workspaceId\)/);
+  assert.match(engineSource, /await claimAutomationOwner\(workspaceId\)/);
   assert.match(serviceWorker, /GET_WORKSPACES/);
   assert.match(serviceWorker, /SET_ACTIVE_WORKSPACE/);
   assert.match(uiSource, /type TabId = 'operation' \| 'tests' \| 'queue' \| 'sessions' \| 'analytics' \| 'diagnostics' \| 'workspaces' \| 'settings'/);
@@ -406,7 +407,7 @@ test('Workspace extraction does not silently overwrite Queue data', () => {
   assert.match(serviceWorker, /QUEUE_REPLACE_HAS_EXECUTED_ITEMS/);
   assert.match(serviceWorker, /existingUrls/);
   assert.match(uiSource, /banks\.append/);
-  assert.match(uiSource, /تحتوي Queue على عناصر منشورة/);
+  assert.match(uiSource, /t\('confirm\.replacePublished'\)/);
   assert.match(uiSource, /onRestore/);
 });
 
@@ -462,7 +463,7 @@ test('Duplicate Protection exposes SHA-256 fingerprints and policy controls', ()
 test('Preflight Check exposes structured checks and guards Start', () => {
   assert.match(models, /PREFLIGHT_CHECK/);
   assert.match(serviceWorker, /performPreflight/);
-  assert.match(serviceWorker, /PREFLIGHT_FAILED/);
+  assert.match(engineSource, /PREFLIGHT_FAILED/);
   assert.match(uiSource, /tests\.preflight/);
   assert.match(uiSource, /tests\.runPreflight/);
 });
@@ -493,9 +494,9 @@ test('Badge mode changes persist and apply immediately without browser restart',
   assert.match(serviceWorker, /case 'UPDATE_SETTINGS'/);
   assert.match(serviceWorker, /await saveSettings\(message\.settings\)/);
   assert.match(serviceWorker, /await broadcast\(updated\)/);
-  assert.match(serviceWorker, /await updateBadge\(snapshot\)/);
-  assert.match(serviceWorker, /settings\.badgeMode === 'COUNT'/);
-  assert.match(serviceWorker, /settings\.badgeMode === 'STATUS'/);
+  assert.match(engineSource, /await updateBadge\(snapshot\)/);
+  assert.match(engineSource, /settings\.badgeMode === 'COUNT'/);
+  assert.match(engineSource, /settings\.badgeMode === 'STATUS'/);
 });
 
 test('daily-limit internal code is translated only at the UI presentation boundary', () => {
@@ -536,11 +537,11 @@ test('tweet bank export and import are exposed through localized UI actions', ()
 test('Start Over recovery is delegated to the domain and never auto-publishes', () => {
   assert.match(models, /type: 'RECOVERY_START_OVER'/);
   assert.match(serviceWorker, /case 'RECOVERY_START_OVER'/);
-  assert.match(serviceWorker, /buildStartOverQueue\(state\.queue/);
-  const startOverCase = serviceWorker.match(/case 'RECOVERY_START_OVER': \{[\s\S]*?\n    \}/)[0];
-  assert.doesNotMatch(startOverCase, /processCurrentItem/, 'Start Over must never trigger publishing');
-  assert.match(startOverCase, /releaseAutomationOwner/);
-  assert.match(startOverCase, /chrome\.alarms\.clear\(ALARM_NAME\)/);
+  assert.match(engineSource, /buildStartOverQueue\(state\.queue/);
+  const startOverFn = engineSource.match(/export async function startOverSession\([\s\S]*?\n\}/)[0];
+  assert.doesNotMatch(startOverFn, /processCurrentItem/, 'Start Over must never trigger publishing');
+  assert.match(startOverFn, /releaseAutomationOwner/);
+  assert.match(startOverFn, /chrome\.alarms\.clear\(ALARM_NAME\)/);
   const recoveryDomain = fs.readFileSync(path.join(root, 'src/domain/recovery.ts'), 'utf8');
   const startOverBuilder = recoveryDomain.match(/export function buildStartOverQueue\([\s\S]*?\n\}/)[0];
   assert.doesNotMatch(startOverBuilder, /status: 'PENDING'[\s\S]{0,80}PUBLISHING/, 'PUBLISHING must never become PENDING');
@@ -556,4 +557,48 @@ test('Recovery card exposes three localized actions including Start Over and Can
   assert.match(uiSource, /t\('recovery\.confirmStartOver'/);
   const styles2 = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
   assert.match(styles2, /\.recovery-actions \{ display: grid/);
+});
+
+test('Automation engine is an isolated module; the service worker only routes', () => {
+  // The engine owns the publish core.
+  assert.match(engineSource, /async function processCurrentItem/);
+  assert.match(engineSource, /async function advanceSession/);
+  assert.match(engineSource, /export async function startSession/);
+  assert.match(engineSource, /export async function pauseSession/);
+  assert.match(engineSource, /export async function resumeSession/);
+  assert.match(engineSource, /export async function stopSession/);
+  assert.match(engineSource, /export async function startOverSession/);
+  assert.match(engineSource, /export async function scheduleSession/);
+  // The service worker must not re-implement engine behavior.
+  assert.doesNotMatch(serviceWorker, /async function processCurrentItem/);
+  assert.doesNotMatch(serviceWorker, /async function advanceSession/);
+  assert.doesNotMatch(serviceWorker, /async function handleAlarm/);
+  assert.doesNotMatch(serviceWorker, /async function performPreflight/);
+  // Engine control cases delegate to the engine module.
+  assert.match(serviceWorker, /case 'START': return startSession/);
+  assert.match(serviceWorker, /case 'PAUSE': return pauseSession\(\)/);
+  assert.match(serviceWorker, /case 'RESUME': return resumeSession\(\)/);
+  assert.match(serviceWorker, /case 'STOP': return stopSession\(\)/);
+  assert.match(serviceWorker, /case 'RECOVERY_START_OVER': return startOverSession\(\)/);
+  assert.match(serviceWorker, /case 'CANCEL_SCHEDULE': return cancelScheduledStart\(\)/);
+  assert.match(serviceWorker, /case 'SCHEDULE': return scheduleSession/);
+  assert.match(serviceWorker, /case 'PREFLIGHT_CHECK': \{\s*const workspaceId[\s\S]*?return performPreflight/);
+});
+
+test('Automation engine has no import path back into the service worker or UI', () => {
+  assert.doesNotMatch(engineSource, /service-worker/);
+  assert.doesNotMatch(engineSource, /from '\.\.\/ui\//);
+  assert.doesNotMatch(engineSource, /runtime\.onMessage/);
+});
+
+test('Engine module preserves the publish safety invariants', () => {
+  assert.match(engineSource, /shouldNeverRepublish\(item\)/);
+  assert.match(engineSource, /canStartItem\(item\.status\)/);
+  assert.match(engineSource, /publishIntentId: operationId/); // intent persisted before submit
+  assert.match(engineSource, /PUBLISHED_UNVERIFIED/); // uncertain outcome never auto-republished
+  assert.match(engineSource, /AUTOMATION_INTERRUPTED/); // stale-operation guard
+  assert.match(engineSource, /acquireStartLock/);
+  assert.match(engineSource, /renewStartLock/);
+  assert.match(engineSource, /performPreflight\(/); // preflight gates start/schedule
+  assert.match(engineSource, /persistAcrossSessions: true/); // alarms survive restarts
 });
