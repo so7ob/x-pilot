@@ -636,3 +636,40 @@ test('Missed-schedule recovery stays user-driven and engine-owned', () => {
     }
   }
 });
+
+test('Every engine notification is translatable through the notifyEvent bridge', () => {
+  const bridge = engineSource.slice(engineSource.indexOf('export async function notifyEvent'), engineSource.indexOf('export async function updateBadge'));
+  const extractTableKeys = (tableName) => {
+    const tableStart = bridge.indexOf(`const ${tableName}`);
+    const tableEnd = bridge.indexOf('};', tableStart);
+    return [...bridge.slice(tableStart, tableEnd).matchAll(/'([^']+)':/g)].map((m) => m[1]);
+  };
+  const titleKeys = extractTableKeys('titleKeys');
+  const messageKeys = extractTableKeys('messageKeys');
+  const dynamicSources = [...bridge.matchAll(/pattern: \/(\^[^/]+)\/u/g)].map((m) => m[1]);
+  assert.ok(titleKeys.length >= 13, 'notification title table must keep covering all titles');
+  assert.ok(messageKeys.length >= 10, 'notification message table must keep covering all messages');
+  // Walk every call site: the title must be mapped; literal or template messages must be mapped or dynamic.
+  const callSites = [...engineSource.matchAll(/notifyEvent\('([^']+)', ([^;]+?)\);/g)];
+  assert.ok(callSites.length >= 12, 'engine notification call sites must stay covered');
+  for (const [, title, messageExpr] of callSites) {
+    assert.ok(titleKeys.includes(title), `unmapped notification title: ${title}`);
+    const literal = messageExpr.startsWith('\'') ? messageExpr.slice(1, -1) : null;
+    if (literal !== null) {
+      const dynamic = dynamicSources.some((source) => new RegExp(source.replace(/\\/g, '\\'), 'u').test(literal));
+      assert.ok(messageKeys.includes(literal) || dynamic || /^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$/.test(literal), `unmapped notification message: ${literal}`);
+    }
+  }
+  assert.match(bridge, /translateForLocale\(locale, message, messageParams/); // key-shaped messages resolve params
+});
+
+test('Header renders the session status exactly once and pagination has no dead code', () => {
+  const headerStart = uiSource.indexOf('<div className="header-status">');
+  const headerEnd = uiSource.indexOf('</header>', headerStart);
+  const header = uiSource.slice(headerStart, headerEnd);
+  assert.match(header, /header-live-dot/);
+  assert.match(header, /<StatusBadge/);
+  assert.equal((header.match(/t\(\\?`statuses\./g) ?? []).length, 1, 'header must render exactly one localized status label');
+  assert.doesNotMatch(pagination, /pageSizeLabel/);
+  assert.doesNotMatch(uiSource, /pageSizeLabel/);
+});

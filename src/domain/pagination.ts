@@ -19,8 +19,4 @@ export function pageRange(totalItems: number, page: number, pageSize: PageSize):
   return { from, to: Math.min(from + pageSize - 1, totalItems) };
 }
 
-export function pageSizeLabel(pageSize: PageSize): string {
-  return pageSize === 'ALL' ? 'الكل' : String(pageSize);
-}
-
 export const pageSizes: PageSize[] = [10, 50, 100, 'ALL'];
