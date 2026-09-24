@@ -252,6 +252,12 @@ export async function createBank(workspaceId: string, name: string, url: string,
   await updateWorkspaceState(workspaceId, (state) => ({ ...state, banks: [...state.banks, bank] }));
   return bank;
 }
+export async function importBanks(workspaceId: string, banks: TweetBank[]): Promise<TweetBank[]> {
+  if (!banks.length) throw new Error('BANK_IMPORT_EMPTY');
+  const prepared = banks.map((bank) => ({ ...bank, id: bank.id || crypto.randomUUID(), workspaceId, updatedAt: Date.now() }));
+  await updateWorkspaceState(workspaceId, (state) => ({ ...state, banks: [...state.banks, ...prepared] }));
+  return prepared;
+}
 export async function updateBank(workspaceId: string, bankId: string, patch: Partial<Pick<TweetBank, 'name' | 'description' | 'url' | 'favorite'>>): Promise<TweetBank> {
   const state = await getWorkspaceState(workspaceId);
   const existing = state.banks.find((bank) => bank.id === bankId);
