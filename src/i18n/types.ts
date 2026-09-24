@@ -18,6 +18,7 @@ export type TranslationTree = {
   workspaces: Record<string, string>;
   ui: Record<string, string>;
   search: Record<string, string>;
+  presets: Record<string, string>;
   filters: Record<string, string>;
   sessions: Record<string, string>;
   history: Record<string, string>;

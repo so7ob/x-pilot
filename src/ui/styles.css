@@ -5,6 +5,7 @@
   --color-surface-3: #edf3fa;
   --color-border: #dce5f0;
   --color-border-subtle: #e9eef5;
+  --color-border-strong: #b7c9e0;
   --color-text: #172235;
   --color-text-2: #50627a;
   --color-text-3: #8190a5;
@@ -45,6 +46,7 @@
     --color-surface-3: #243247;
     --color-border: #304157;
     --color-border-subtle: #26364b;
+    --color-border-strong: #3d5a80;
     --color-text: #eef5ff;
     --color-text-2: #b6c5d8;
     --color-text-3: #8293aa;
@@ -209,10 +211,35 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .workspace-card-stats span:first-child { color: var(--color-primary); font-weight: 900; }
 
 .search-toolbar { display: grid; gap: 8px; margin: 12px 0; padding: 10px; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-2); }
+
+/* Search input with inline magnifier icon and "/" kbd hint (logical, RTL-safe). */
+.search-input-wrap { position: relative; display: flex; align-items: center; }
+.search-input-wrap .search-input { width: 100%; padding: 8px; padding-inline-start: 30px; padding-inline-end: 34px; font-size: 11px; }
+.search-input-icon { position: absolute; inset-inline-start: 10px; display: inline-flex; color: var(--color-text-3); pointer-events: none; transition: color var(--transition-fast); }
+.search-input-wrap:focus-within .search-input-icon { color: var(--color-primary); }
+.search-kbd { position: absolute; inset-inline-end: 9px; display: inline-flex; align-items: center; justify-content: center; min-width: 16px; padding: 1px 5px; border: 1px solid var(--color-border); border-bottom-width: 2px; border-radius: 5px; background: var(--color-surface-3); color: var(--color-text-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 9px; font-weight: 700; line-height: 1.5; pointer-events: none; transition: opacity var(--transition-fast); }
+.search-input-wrap:focus-within .search-kbd { opacity: 0; }
 .search-filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .search-filters select, .search-filters input { flex: 1 1 120px; min-width: 0; padding: 8px; font-size: 11px; }
 .search-filters button { padding: 7px 9px; font-size: 11px; }
 .search-count { margin: 7px 0; color: var(--color-text-3); font-size: 11px; }
+
+/* Named filter presets: chip row under the filter toolbar. */
+.preset-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.preset-row:empty { display: none; }
+.filter-preset-chip { display: inline-flex; align-items: stretch; max-width: 220px; border: 1px solid var(--color-border); border-radius: 999px; background: var(--color-surface); overflow: hidden; transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast); }
+.filter-preset-chip:hover { border-color: var(--color-border-strong); box-shadow: var(--shadow-sm); transform: translateY(-1px); }
+.preset-apply { min-width: 0; max-width: 190px; padding: 4px 6px 4px 12px; border: none; background: transparent; font-size: 11px; font-weight: 600; color: var(--color-text-2); text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+.preset-apply:hover { color: var(--color-text); }
+.preset-remove { padding: 4px 10px; border: none; background: transparent; font-size: 13px; line-height: 1; color: var(--color-text-3); transition: color var(--transition-fast), background var(--transition-fast); }
+.preset-remove:hover { color: var(--color-danger); background: var(--color-danger-bg); }
+.preset-save-toggle { padding: 4px 11px; border: 1px dashed var(--color-border); border-radius: 999px; background: transparent; font-size: 11px; font-weight: 600; color: var(--color-text-3); transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast); }
+.preset-save-toggle:hover:not(:disabled) { color: var(--color-text-2); border-color: var(--color-border); background: var(--color-surface-3); }
+.preset-save-toggle:disabled { opacity: .55; cursor: not-allowed; }
+.preset-save-form { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.preset-name-input { flex: 0 1 170px; min-width: 130px; padding: 6px 10px; font-size: 11px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
+.preset-save-form button { padding: 5px 11px; font-size: 11px; }
+.preset-save-form button.primary { padding: 5px 13px; }
 .queue-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 7px; color: var(--color-text-2); font-size: 11px; }
 .queue-toolbar label { display: inline-flex; align-items: center; gap: 7px; margin: 0; }
 .queue-toolbar select { width: auto; min-width: 72px; padding: 6px 8px; font-size: 11px; }
@@ -409,6 +436,13 @@ h2, h3 { text-wrap: balance; }
   .empty-icon { background: #1b2f4a; color: #6fa9ef; }
   .bank-card:hover, .workspace-card:hover, .session-summary:hover { border-color: #3d5a80; }
   .bank-card.selected, .workspace-card.active { border-color: #3d5a80; box-shadow: 0 0 0 3px #1667d92e; }
+  .filter-preset-chip { border-color: #304157; background: var(--color-surface-2); }
+  .filter-preset-chip:hover { border-color: #3d5a80; }
+  .preset-name-input { border-color: #304157; background: var(--color-surface); }
+  .preset-save-toggle { border-color: #304157; }
+  .preset-save-toggle:hover:not(:disabled) { border-color: #3d5a80; background: var(--color-surface-3); }
+  .search-kbd { border-color: #304157; background: #1c2839; color: #8293aa; }
+  .search-input-wrap:focus-within .search-input-icon { color: #6fa9ef; }
 }
 
 footer { margin: 18px 2px 6px; }
