@@ -452,6 +452,22 @@ test('Multiple Tweet Banks remain explicit and Workspace-scoped', () => {
   assert.match(uiSource, /banks\.add/);
 });
 
+test('Inline rename exposes UPDATE_WORKSPACE / UPDATE_BANK with honest validation', () => {
+  assert.match(models, /UPDATE_WORKSPACE/);
+  assert.match(models, /'UPDATE_BANK'; workspaceId/);
+  assert.match(serviceWorker, /case 'UPDATE_WORKSPACE'/);
+  assert.match(serviceWorker, /case 'UPDATE_BANK'/);
+  // UI: real handlers wired, names normalized, empty names refused, notices localized.
+  assert.match(uiSource, /type: 'UPDATE_WORKSPACE', workspaceId, patch: \{ name \}/);
+  assert.match(uiSource, /type: 'UPDATE_BANK', workspaceId: meta\?\.activeWorkspaceId, bankId, patch: \{ name \}/);
+  assert.match(uiSource, /normalizeDisplayName/);
+  assert.match(uiSource, /workspaces\.nameRequired/);
+  assert.match(uiSource, /banks\.nameRequired/);
+  assert.match(uiSource, /workspaces\.renamed/);
+  assert.match(uiSource, /banks\.renamed/);
+  assert.match(uiSource, /rename-form/);
+});
+
 test('Refresh Diff is non-destructive and supports selective Queue merge', () => {
   assert.match(models, /BankDiffResult/);
   assert.match(models, /REFRESH_BANK/);

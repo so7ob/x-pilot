@@ -261,6 +261,21 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .preset-save-toggle { padding: 4px 11px; border: 1px dashed var(--color-border); border-radius: 999px; background: transparent; font-size: 11px; font-weight: 600; color: var(--color-text-3); transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast); }
 .preset-save-toggle:hover:not(:disabled) { color: var(--color-text-2); border-color: var(--color-border); background: var(--color-surface-3); }
 .preset-save-toggle:disabled { opacity: .55; cursor: not-allowed; }
+
+/* Inline rename forms (workspace + bank cards): the card title swaps for a
+   compact input row; Enter commits, Escape cancels. Reuses the preset
+   edit-form language so "renaming" looks the same everywhere. */
+.rename-form { display: inline-flex; flex: 1; min-width: 0; align-items: center; gap: 5px; padding: 3px 5px; border: 1px dashed var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface-2); }
+.rename-form input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 12px; }
+.rename-form input:focus-visible { outline: none; box-shadow: var(--shadow-focus); }
+.rename-form button { flex: none; min-width: 28px; min-height: 28px; padding: 4px 8px; font-size: 11px; border-radius: var(--radius-sm); }
+/* Pencil trigger: quiet until hover/focus-within (touch devices always show). */
+.rename-trigger { width: 28px; min-height: 28px; padding: 0; color: var(--color-text-3); opacity: 0; transition: opacity var(--transition-fast), color var(--transition-fast); }
+.bank-card:hover .rename-trigger, .bank-card:focus-within .rename-trigger,
+.workspace-card:hover .rename-trigger, .workspace-card:focus-within .rename-trigger { opacity: 1; }
+.rename-trigger:hover { color: var(--color-primary); }
+@media (hover: none) { .rename-trigger { opacity: 1; } }
+.bank-heading-side { display: inline-flex; align-items: center; gap: 4px; }
 .preset-save-form { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .preset-name-input { flex: 0 1 170px; min-width: 130px; padding: 6px 10px; font-size: 11px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); color: var(--color-text); }
 .preset-save-form button { padding: 5px 11px; font-size: 11px; }
