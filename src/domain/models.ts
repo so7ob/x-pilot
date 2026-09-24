@@ -20,6 +20,8 @@ export interface AutomationSession {
 export interface LegacyPublishAttempt {
   id: string; workspaceId?: string; sessionId?: string; queueItemId: string; link: string; sourceUrl?: string; publishedPostUrl?: string; timestamp: number;
   attemptNumber: number; action: string; result: string; error?: string;
+  /** Analytical tweet snapshot captured at attempt time (optional for legacy rows). */
+  tweetLabel?: string; bankId?: string; bankName?: string; itemPosition?: number; durationMs?: number; adapter?: string;
 }
 export interface HistoricalSession {
   id: string; workspaceId: string; bankId?: string; startedAt: number; pausedAt?: number; completedAt?: number;
@@ -43,7 +45,7 @@ export interface AutomationSessionRuntime { workspaceId: string; sessionId: stri
 export interface AutomationSessionRecord extends HistoricalSession { scheduledStartAt?: number; timezone: string; }
 export interface BankSnapshot { id: string; bankId: string; workspaceId: string; capturedAt: number; items: BankSnapshotItem[]; }
 export interface PublishAttempt extends Omit<LegacyPublishAttempt, 'link' | 'action' | 'result' | 'error'> { targetUrl?: string; link?: string; sourceUrl?: string; publishedPostUrl?: string; action: string; result: string; error?: string; errorCode?: string; errorMessage?: string; durationMs?: number; adapter?: string; }
-export interface LegacyPublishAttempt { id: string; workspaceId?: string; sessionId?: string; queueItemId: string; link: string; sourceUrl?: string; publishedPostUrl?: string; timestamp: number; attemptNumber: number; action: string; result: string; error?: string; }
+export interface LegacyPublishAttempt { id: string; workspaceId?: string; sessionId?: string; queueItemId: string; link: string; sourceUrl?: string; publishedPostUrl?: string; timestamp: number; attemptNumber: number; action: string; result: string; error?: string; tweetLabel?: string; bankId?: string; bankName?: string; itemPosition?: number; durationMs?: number; adapter?: string; }
 export const defaultSettings: Settings = { intervalMinutes: 2, maxRetries: 2, failureBehavior: 'CONTINUE', confirmBeforeStart: true, keepAutomationTabOpen: true, closeTabOnComplete: false, duplicatePolicy: 'BLOCK', publishingWindows: [], timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', notificationsEnabled: true, badgeMode: 'COUNT' };
 export type AutomationConnection = 'CONNECTED' | 'DISCONNECTED' | 'NOT_REQUIRED';
 export interface RuntimeStatus { engineStatus: SessionStatus; connection: AutomationConnection; automationTabId?: number; automationWorkspaceId?: string; checkedAt: number; }
