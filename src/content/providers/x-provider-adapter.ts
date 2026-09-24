@@ -1,4 +1,18 @@
+import { canonicalStatusUrl, isAuthoredBy, isOwnPermalink } from '../../domain/published-post-url.ts';
 import type { ContentInspection } from '../../domain/models';
+
+// Attribute selectors are assembled at runtime: literal bracket-plus-h
+// sequences proved lossy across this environment's transport layers (v1.13.2).
+const LB = String.fromCharCode(91); // "["
+const STATUS_ANCHOR_SELECTOR = `a${LB}href*="/status/"]`;
+const TOAST_LINK_SELECTOR = `[data-testid="toast"] ${STATUS_ANCHOR_SELECTOR}`;
+const PROFILE_LINK_SELECTOR = 'a[data-testid="AppTabBar_Profile_Link"]';
+
+// Pre-click population of status permalinks, frozen by publish() so
+// getPublishedPostUrl() can tell OUR new permalink apart from the timeline
+// noise (other accounts' posts and analytics rows) that was already on the
+// page before the publish click.
+let prePublishStatusHrefs: ReadonlySet<string> | undefined;
 
 const composerSelectors = [
   '[data-testid="tweetTextarea_0"]',
@@ -112,11 +126,59 @@ export function inspect(): ContentInspection {
 }
 
 export function getPublishedPostUrl(): string | undefined {
-  const statusLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/status/"]'))
-    .map((anchor) => anchor.href)
-    .filter((href) => /^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[^/]+\/status\/\d+/i.test(href));
-  const current = location.href.match(/^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/[^/]+\/status\/\d+/i)?.[0];
-  return statusLinks.at(-1) ?? current;
+  const screenName = currentScreenName();
+  // 1. X's post-publish toast — the only element whose status link is
+  //    guaranteed to reference the post that was just created.
+  for (const anchor of document.querySelectorAll<HTMLAnchorElement>(TOAST_LINK_SELECTOR)) {
+    const canonical = canonicalStatusUrl(anchor.href);
+    if (!canonical) continue;
+    if (!screenName || isAuthoredBy(canonical, screenName)) return canonical;
+  }
+  // 2. Fresh permalinks: status links that appeared after the publish click,
+  //    authored by the logged-in account. Pre-existing links (timeline,
+  //    notifications, analytics rows — including our own older posts) never
+  //    match, and neither do foreign accounts' fresh links.
+  if (prePublishStatusHrefs) {
+    for (const anchor of collectStatusAnchors()) {
+      const canonical = canonicalStatusUrl(anchor.href);
+      if (!canonical || prePublishStatusHrefs.has(canonical)) continue;
+      if (isAuthoredBy(canonical, screenName)) return canonical;
+    }
+  }
+  // 3. The page itself is our new post's permalink (some flows redirect
+  //    there; `/i/web/status/{id}` is X's internal own-post permalink).
+  if (isOwnPermalink(location.href, screenName)) return canonicalStatusUrl(location.href);
+  // No trusted signal — an honest missing link beats a wrong link.
+  return undefined;
+}
+
+function collectStatusAnchors(): HTMLAnchorElement[] {
+  return Array.from(document.querySelectorAll<HTMLAnchorElement>(STATUS_ANCHOR_SELECTOR));
+}
+
+function snapshotStatusHrefs(): ReadonlySet<string> {
+  const snapshot = new Set<string>();
+  for (const anchor of collectStatusAnchors()) {
+    const canonical = canonicalStatusUrl(anchor.href);
+    if (canonical) snapshot.add(canonical);
+  }
+  return snapshot;
+}
+
+function currentScreenName(): string | undefined {
+  const anchor = document.querySelector<HTMLAnchorElement>(PROFILE_LINK_SELECTOR);
+  const segment = firstPathSegment(anchor?.getAttribute('href') ?? '');
+  return segment;
+}
+
+function firstPathSegment(href: string): string | undefined {
+  const raw = href.split(/[?#]/)[0].split('/').filter(Boolean)[0];
+  if (!raw) return undefined;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 export function publish(): ContentInspection {
@@ -124,6 +186,9 @@ export function publish(): ContentInspection {
   if (!state.ok) return state;
   const button = findPostButton();
   if (!button) return { ...state, ok: false, postButtonFound: false, reason: 'POST_BUTTON_NOT_FOUND' };
+  // Freeze the pre-click status-link population before the click so
+  // getPublishedPostUrl() can later detect which permalink is genuinely NEW.
+  prePublishStatusHrefs = snapshotStatusHrefs();
   button.click();
   return { ...state, ok: true };
 }

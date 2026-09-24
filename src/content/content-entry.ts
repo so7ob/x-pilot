@@ -18,14 +18,6 @@ if (!contentGlobal[listenerKey]) {
       sendResponse({ publishedPostUrl: getPublishedPostUrl() });
       return true;
     }
-    if (message.type === 'X_GET_PUBLISHED_URL') {
-      sendResponse({ publishedPostUrl: getPublishedPostUrl() });
-      return true;
-    }
-    if (message.type === 'X_GET_PUBLISHED_URL') {
-      sendResponse({ publishedPostUrl: getPublishedPostUrl() });
-      return true;
-    }
     return false;
   });
 }
