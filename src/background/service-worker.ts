@@ -1,6 +1,7 @@
 import type { AppState, AutomationSession, BankDiffResult, BankSnapshotItem, BulkActionResult, BulkQueueAction, ContentInspection, DiagnosticsCheck, DiagnosticsResult, DryRunItemResult, DryRunResult, QueueItem, RuntimeMessage, RuntimeStatus, Settings } from '../domain/models';
 import { createHistoricalSession, defaultSettings } from '../domain/models';
 import { classifyBankDiff, mergeSelectedDiffItems } from '../domain/bank-diff';
+import { buildBankExport, buildBanksExport, parseBankImport } from '../domain/bank-transfer';
 import { fingerprintTweet } from '../domain/content-fingerprint';
 import { runPreflight } from '../domain/preflight';
 import { hasFutureRecoveryAlarm, normalizeRecovery } from '../domain/recovery';
@@ -11,7 +12,7 @@ import { decideAlarmFailure } from '../domain/alarm-recovery';
 import { applyBulkStatus, reorderSelected } from '../domain/bulk-queue';
 import { shouldNeverRepublish } from '../domain/data-integrity.ts';
 import { getStoredLocale, formatDateTimeForLocale, translateForLocale } from '../i18n/translate.ts';
-import { acquireStartLock, addAttempt, archiveBank, claimAutomationOwner, cleanupRestoreStaging, clearWorkspaceProfile, createBank, createWorkspace, deleteBank, deleteWorkspace, exportBackup, getAutomationOwner, getHistoricalSessions, getMeta, getSettings, getState as getActiveState, getWorkspaceSettings, getWorkspaceState, listBanks, listWorkspaces, releaseAutomationOwner, releaseStartLock, renewStartLock, restoreBank, restoreBackup, saveHistoricalSession, saveQueue, saveSession, saveSettings, setActiveWorkspace, updateBank, updateHistoricalSession, updateState as updateActiveState, updateWorkspace, updateWorkspaceProfile, updateWorkspaceState, archiveWorkspace, restoreWorkspace, validateBackup } from '../storage/storage-repository';
+import { acquireStartLock, addAttempt, archiveBank, claimAutomationOwner, cleanupRestoreStaging, clearWorkspaceProfile, createBank, createWorkspace, deleteBank, deleteWorkspace, exportBackup, getAutomationOwner, getHistoricalSessions, getMeta, getSettings, getState as getActiveState, getWorkspaceSettings, getWorkspaceState, importBanks, listBanks, listWorkspaces, releaseAutomationOwner, releaseStartLock, renewStartLock, restoreBank, restoreBackup, saveHistoricalSession, saveQueue, saveSession, saveSettings, setActiveWorkspace, updateBank, updateHistoricalSession, updateState as updateActiveState, updateWorkspace, updateWorkspaceProfile, updateWorkspaceState, archiveWorkspace, restoreWorkspace, validateBackup } from '../storage/storage-repository';
 
 const ALARM_NAME = 'x-queue-next-item';
 const SCHEDULE_ALARM_NAME = 'x-queue-scheduled-start';
@@ -766,6 +767,25 @@ async function handleMessage(message: RuntimeMessage): Promise<unknown> {
     case 'DELETE_BANK': {
       const workspaceId = message.workspaceId ?? (await getMeta()).activeWorkspaceId;
       await deleteBank(workspaceId, message.bankId, message.confirmed); return getWorkspaceState(workspaceId);
+    }
+    case 'EXPORT_BANKS': {
+      const meta = await getMeta();
+      const workspaceId = message.workspaceId ?? meta.activeWorkspaceId;
+      const state = await getWorkspaceState(workspaceId);
+      const requestedIds = [...new Set(message.bankIds)];
+      const banks = state.banks.filter((bank) => requestedIds.includes(bank.id));
+      if (!banks.length) throw new Error('BANK_EXPORT_NOT_FOUND');
+      const appVersion = chrome.runtime?.getManifest?.().version ?? '0.0.0';
+      return banks.length === 1 ? buildBankExport(banks[0], appVersion) : buildBanksExport(banks, appVersion);
+    }
+    case 'IMPORT_BANKS': {
+      const meta = await getMeta();
+      const workspaceId = message.workspaceId ?? meta.activeWorkspaceId;
+      const imported = parseBankImport(message.payload);
+      const saved = await importBanks(workspaceId, imported);
+      const refreshed = await getWorkspaceState(workspaceId);
+      await broadcast({ workspaceId: refreshed.workspaceId, queue: refreshed.queue, session: refreshed.session, history: refreshed.history });
+      return { workspaceId, importedCount: saved.length, importedNames: saved.map((bank) => bank.name) };
     }
     case 'GET_SESSION_HISTORY': {
       const workspaceId = message.workspaceId ?? (await getMeta()).activeWorkspaceId;

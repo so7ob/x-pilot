@@ -6,6 +6,14 @@ export const errorTranslationKeys: Record<string, string> = {
   LOGIN_REQUIRED: 'errors.loginRequired',
   PUBLISH_CONTROLS_NOT_READY: 'errors.publishControlsNotReady',
   INVALID_JSON: 'errors.invalidJson',
+  BANK_IMPORT_INVALID: 'errors.bankImportInvalid',
+  BANK_IMPORT_UNSUPPORTED_VERSION: 'errors.bankImportUnsupportedVersion',
+  BANK_IMPORT_EMPTY: 'errors.bankImportEmpty',
+  BANK_IMPORT_TOO_LARGE: 'errors.bankImportTooLarge',
+  BANK_IMPORT_BANK_TOO_LARGE: 'errors.bankImportBankTooLarge',
+  BANK_IMPORT_INVALID_URL: 'errors.bankImportInvalidUrl',
+  BANK_IMPORT_INVALID_SNAPSHOT: 'errors.bankImportInvalidSnapshot',
+  BANK_EXPORT_NOT_FOUND: 'errors.bankExportNotFound',
 };
 
 export function errorTranslationKey(message?: string): string | undefined {
