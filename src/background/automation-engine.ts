@@ -576,6 +576,37 @@ export async function startSession(messageWorkspaceId?: string): Promise<unknown
 
 }
 
+/**
+ * Starts an existing SCHEDULED session immediately after its scheduled start
+ * time was missed (alarm lost or never delivered). Explicit user action only —
+ * never invoked automatically. Safety parity with startSession:
+ * - start-lock lease held for the whole operation;
+ * - preflight must be ready before any publishing proceeds;
+ * - the schedule alarm is cleared so the missed start cannot double-fire;
+ * - publish intents are already persisted for the queue — no new intent.
+ */
+export async function startScheduledNow(): Promise<unknown> {
+  const workspaceId = (await getMeta()).activeWorkspaceId;
+  const startToken = await acquireStartLock(workspaceId);
+  const leaseHeartbeat = setInterval(() => { void renewStartLock(startToken).then((healthy) => { if (!healthy) console.error('X-Pilot START lease lost', { workspaceId }); }).catch((error) => console.error('X-Pilot START lease renewal failed', error)); }, 5_000);
+  try {
+    const state = await getWorkspaceState(workspaceId);
+    if (!state.session || state.session.status !== 'SCHEDULED') throw new Error('START_NOT_SCHEDULED');
+    const preflight = await performPreflight(workspaceId);
+    if (!preflight.ready) { await notifyEvent('X-Pilot: فشل فحص الجاهزية', preflight.summaryKey); throw new Error(`PREFLIGHT_FAILED:${preflight.summaryKey}`); }
+    await claimAutomationOwner(workspaceId);
+    const running = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, status: 'RUNNING', startedAt: Date.now(), scheduledStartAt: undefined, nextRunAt: undefined, updatedAt: Date.now() } : null }));
+    await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
+    await broadcast(running);
+    await processCurrentItem();
+    return getState();
+  } finally {
+    clearInterval(leaseHeartbeat);
+    await releaseStartLock(startToken);
+  }
+
+}
+
 export async function pauseSession(): Promise<AppState> {
   await chrome.alarms.clear(ALARM_NAME);
   const paused = await updateRuntimeState((state) => ({

@@ -6,7 +6,7 @@ import { fingerprintTweet } from '../domain/content-fingerprint';
 import { isTerminalItem } from '../domain/state-machine';
 import { extractLinksFromValues } from '../extraction/bank-parser';
 import { applyBulkStatus, reorderSelected } from '../domain/bulk-queue';
-import { activateAutomationTab, broadcast, cancelScheduledStart, commitQueueMutation, getOrCreateAutomationTab, getPreviousActiveTabId, getState, getRuntimeStatus, inspectTab, pauseSession, performPreflight, recoverPersistedState, restoreActiveTab, resumeSession, scheduleSession, startOverSession, startSession, stopSession, updateRuntimeState, wait, waitForTabLoad, ALARM_NAME, SCHEDULE_ALARM_NAME } from './automation-engine';
+import { activateAutomationTab, broadcast, cancelScheduledStart, commitQueueMutation, getOrCreateAutomationTab, getPreviousActiveTabId, getState, getRuntimeStatus, inspectTab, pauseSession, performPreflight, recoverPersistedState, restoreActiveTab, resumeSession, scheduleSession, startOverSession, startScheduledNow, startSession, stopSession, updateRuntimeState, wait, waitForTabLoad, ALARM_NAME, SCHEDULE_ALARM_NAME } from './automation-engine';
 import { addAttempt, archiveBank, cleanupRestoreStaging, clearWorkspaceProfile, createBank, createWorkspace, deleteBank, deleteWorkspace, exportBackup, getHistoricalSessions, getMeta, getSettings, getState as getActiveState, getWorkspaceState, importBanks, listBanks, listWorkspaces, releaseAutomationOwner, restoreBackup, restoreBank, saveSettings, setActiveWorkspace, updateBank, updateWorkspace, updateWorkspaceProfile, updateWorkspaceState, archiveWorkspace, restoreWorkspace, validateBackup } from '../storage/storage-repository';
 
 const bankDiffs = new Map<string, BankDiffResult>();
@@ -401,6 +401,7 @@ async function handleMessage(message: RuntimeMessage): Promise<unknown> {
     case 'RESUME': return resumeSession();
     case 'STOP': return stopSession();
     case 'RECOVERY_START_OVER': return startOverSession();
+    case 'START_SCHEDULED_NOW': return startScheduledNow();
     case 'SKIP_CURRENT': return commitQueueMutation((state) => ({ ...state, queue: state.queue.map((item) => item.id === state.session?.currentItemId ? { ...item, status: 'SKIPPED', updatedAt: Date.now() } : item) }));
     case 'RETRY_ITEM': return commitQueueMutation((state) => ({ ...state, queue: state.queue.map((item) => item.id === message.itemId ? { ...item, status: 'PENDING', attempts: 0, lastError: undefined, publishedAt: undefined, publishIntentId: undefined, publishStartedAt: undefined, publishSubmittedAt: undefined, updatedAt: Date.now() } : item) }));
     case 'DELETE_ITEM': return commitQueueMutation((state) => ({ ...state, queue: state.queue.filter((item) => item.id !== message.itemId).map((item, index) => ({ ...item, position: index + 1 })) }));
