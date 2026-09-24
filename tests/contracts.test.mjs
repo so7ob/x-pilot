@@ -749,6 +749,21 @@ test('Saved search filters stay UI-only and restore is init-only', () => {
   assert.match(uiSource, /restored\.workspaceId \|\| activeId/);
 });
 
+test('Session-history export is read-only tooling with a localized UI action', () => {
+  assert.match(models, /EXPORT_SESSION_HISTORY/);
+  assert.match(serviceWorker, /case 'EXPORT_SESSION_HISTORY': \{\s*const workspaceId = message\.workspaceId \?\? \(await getMeta\(\)\)\.activeWorkspaceId;/);
+  assert.match(serviceWorker, /buildSessionHistoryExport\(\{ workspaceId, sessions, attempts: workspaceState\.history/);
+  assert.match(serviceWorker, /from '\.\.\/domain\/session-export'/);
+  // The handler must stay read-only: no repository write calls inside its body.
+  const exportCase = serviceWorker.slice(serviceWorker.indexOf("case 'EXPORT_SESSION_HISTORY'"), serviceWorker.indexOf("case 'PREFLIGHT_CHECK'"));
+  assert.doesNotMatch(exportCase, /addAttempt|updateWorkspaceState|updateWorkspace\b|saveSettings|importBanks|createBank|createWorkspace/, 'export handler must not write any store');
+  // UI: localized button + localized notices + validation via the domain guard.
+  assert.match(uiSource, /t\('sessions\.export'\)/);
+  assert.match(uiSource, /t\('sessions\.exported', \{ count: result\.sessions\.length \}\)/);
+  assert.match(uiSource, /isSessionHistoryExportEnvelope\(result\)/);
+  assert.match(uiSource, /x-pilot-sessions-\$\{Date\.now\(\)\}\.json/);
+});
+
 test('Header renders the session status exactly once and pagination has no dead code', () => {
   const headerStart = uiSource.indexOf('<div className="header-status">');
   const headerEnd = uiSource.indexOf('</header>', headerStart);
