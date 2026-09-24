@@ -28,7 +28,7 @@ test('Dry Run uses one sequential automation tab and restores the previous tab',
 });
 
 test('Dry Run has a hard no-publish boundary', () => {
-  const runner = worker.slice(worker.indexOf('async function runDryRun'), worker.indexOf('async function waitForPublishReady'));
+  const runner = worker.slice(worker.indexOf('async function runDryRun'), worker.indexOf('async function extractBank'));
   assert.doesNotMatch(runner, /X_PUBLISH/);
   assert.doesNotMatch(runner, /attempts:/);
   assert.doesNotMatch(runner, /addAttempt/);
