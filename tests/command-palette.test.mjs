@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {
   buildPaletteCommands,
+  buildRecentCommands,
   buildHighlightSegments,
   filterCommands,
   groupCommands,
@@ -148,7 +149,7 @@ test('sanitizeRecentCommandIds drops junk, dedupes and caps', () => {
   assert.deepEqual(sanitizeRecentCommandIds(undefined), []);
 });
 
-test('groupCommands surfaces recents as the leading group without duplicating them', () => {
+test('groupCommands surfaces pre-resolved recents as the leading group without duplicating them', () => {
   const commands = [
     tab('operation', 'Operation'),
     tab('sessions', 'Sessions'),
@@ -157,7 +158,9 @@ test('groupCommands surfaces recents as the leading group without duplicating th
     { id: 'w:1', kind: 'workspace', label: 'Campaign B' },
   ];
   const labels = { tab: 'Tabs', action: 'Actions', workspace: 'Switch workspace' };
-  const groups = groupCommands(commands, labels, { ids: ['a:refresh-data', 'tab:operation', 'ghost', 'a:refresh-data'], label: 'Recently used' });
+  // Host-side resolution: buildRecentCommands -> groupCommands (real composition).
+  const resolved = buildRecentCommands({ ids: ['a:refresh-data', 'tab:operation', 'ghost', 'a:refresh-data'], commands, workspaceDirectory: {} });
+  const groups = groupCommands(commands, labels, { commands: resolved.commands, label: 'Recently used' });
   assert.deepEqual(groups.map((group) => group.kind), ['recent', 'tab', 'action', 'workspace'], 'recent group leads, other groups keep their order');
   assert.equal(groups[0].label, 'Recently used');
   assert.deepEqual(groups[0].commands.map((item) => item.id), ['a:refresh-data', 'tab:operation'], 'recency order, duplicates and unknown ids dropped');
@@ -165,8 +168,93 @@ test('groupCommands surfaces recents as the leading group without duplicating th
   assert.deepEqual(groups[2].commands.map((item) => item.id), ['a:export-backup'], 'non-recent actions stay in the action group');
   const withoutRecents = groupCommands(commands, labels);
   assert.deepEqual(withoutRecents.map((group) => group.kind), ['tab', 'action', 'workspace'], 'no recents keeps the legacy shape');
-  const emptyRecent = groupCommands(commands, labels, { ids: ['ghost'], label: 'Recently used' });
-  assert.deepEqual(emptyRecent.map((group) => group.kind), ['tab', 'action', 'workspace'], 'an all-stale recent list yields no recent group');
+  const emptyRecent = groupCommands(commands, labels, { commands: [], label: 'Recently used' });
+  assert.deepEqual(emptyRecent.map((group) => group.kind), ['tab', 'action', 'workspace'], 'an empty recent list yields no recent group');
+  const duplicateRecent = groupCommands(commands, labels, { commands: [commands[0], commands[0]], label: 'Recently used' });
+  assert.deepEqual(duplicateRecent[0].commands.map((item) => item.id), ['tab:operation'], 'duplicate entries inside the recent list are dropped defensively');
+});
+
+// ---- recents resolve against the live workspace state (v1.12.0 Cycle A) ----
+
+test('buildRecentCommands attaches the switch detail to live workspace commands', () => {
+  const commands = [
+    { id: 'workspace:w1', kind: 'workspace', label: 'Campaign B', icon: 'workspace', value: 'w1' },
+    { id: 'tab:operation', kind: 'tab', label: 'Operation' },
+  ];
+  const result = buildRecentCommands({
+    ids: ['workspace:w1', 'tab:operation'],
+    commands,
+    workspaceDirectory: { w1: { name: 'Campaign B', archived: false, active: false } },
+    labels: { switch: 'Switch workspace', current: 'Current workspace', archived: 'Archived' },
+  });
+  assert.deepEqual(result.staleWorkspaceIds, [], 'nothing stale when everything resolves');
+  assert.equal(result.commands[0].detail, 'Switch workspace', 'live workspace entry gets the switch detail');
+  assert.equal(result.commands[0].label, 'Campaign B');
+  assert.equal(result.commands[0].disabled, undefined);
+  assert.equal(result.commands[1].detail, undefined, 'tab entries carry no detail');
+});
+
+test('buildRecentCommands resurrects the now-active workspace with its live name and current detail', () => {
+  const commands = []; // active workspaces are filtered out of the live switch list
+  const result = buildRecentCommands({
+    ids: ['workspace:w1'],
+    commands,
+    workspaceDirectory: { w1: { name: 'Main Workspace', archived: false, active: true } },
+    labels: { current: 'Current workspace' },
+  });
+  assert.deepEqual(result.staleWorkspaceIds, [], 'an active workspace is not stale');
+  assert.equal(result.commands.length, 1);
+  assert.equal(result.commands[0].label, 'Main Workspace', 'label resolves from the directory, not stored text');
+  assert.equal(result.commands[0].detail, 'Current workspace');
+  assert.equal(result.commands[0].value, 'w1', 'still runnable — idempotent re-select');
+  assert.equal(result.commands[0].disabled, undefined);
+});
+
+test('buildRecentCommands resurrects an archived workspace as a disabled row and reports renamed workspaces honestly', () => {
+  const commands = [
+    { id: 'workspace:w2', kind: 'workspace', label: 'OLD NAME', icon: 'workspace', value: 'w2' },
+  ];
+  const result = buildRecentCommands({
+    ids: ['workspace:wArchived', 'workspace:w2'],
+    commands,
+    workspaceDirectory: {
+      wArchived: { name: 'Old Campaign', archived: true, active: false },
+      w2: { name: 'Renamed Campaign', archived: false, active: false },
+    },
+    labels: { switch: 'Switch workspace', archived: 'Archived' },
+  });
+  assert.deepEqual(result.staleWorkspaceIds, []);
+  assert.equal(result.commands[0].label, 'Old Campaign');
+  assert.equal(result.commands[0].detail, 'Archived', 'archived entries say so');
+  assert.equal(result.commands[0].disabled, true, 'archived rows are disabled');
+  assert.equal(result.commands[1].label, 'Renamed Campaign', 'a renamed live workspace shows the NEW name');
+  assert.equal(result.commands[1].detail, 'Switch workspace');
+});
+
+test('buildRecentCommands reports deleted workspaces as stale and hides context-dependent misses silently', () => {
+  const commands = [
+    { id: 'action:focus-search', kind: 'action', label: 'Focus search' },
+  ];
+  const result = buildRecentCommands({
+    ids: ['workspace:deleted', 'action:focus-search', 'tab:operation'],
+    commands,
+    workspaceDirectory: {},
+  });
+  assert.deepEqual(result.staleWorkspaceIds, ['workspace:deleted'], 'deleted workspace ids are prunable');
+  assert.deepEqual(result.commands.map((item) => item.id), ['action:focus-search'], 'live entries survive; missing tab ids hide without staleness');
+});
+
+test('buildRecentCommands tolerates junk ids, empty names and missing labels', () => {
+  const commands = [
+    { id: 'workspace:w1', kind: 'workspace', label: 'W1', icon: 'workspace', value: 'w1' },
+  ];
+  const junk = buildRecentCommands({ ids: ['', 5, null, 'workspace:w1', 'workspace:w1'], commands, workspaceDirectory: { w1: { name: 'W1', archived: false, active: false } } });
+  assert.deepEqual(junk.commands.map((item) => item.id), ['workspace:w1'], 'junk ids skipped, duplicates dropped');
+  assert.deepEqual(junk.staleWorkspaceIds, []);
+  const emptyName = buildRecentCommands({ ids: ['workspace:ghost'], commands, workspaceDirectory: { ghost: { name: '', archived: false, active: false } } });
+  assert.deepEqual(emptyName.staleWorkspaceIds, ['workspace:ghost'], 'a directory entry without a name is treated as stale');
+  const noLabels = buildRecentCommands({ ids: ['workspace:w1'], commands, workspaceDirectory: { w1: { name: 'W1', archived: false, active: false } } });
+  assert.equal(noLabels.commands[0].detail, undefined, 'missing labels simply omit the detail line');
 });
 
 

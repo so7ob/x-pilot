@@ -9,8 +9,8 @@ export type CommandPaletteProps = {
   placeholder: string;
   emptyLabel: string;
   footerHints: { navigate: string; run: string; close: string };
-  /** Shown as the leading group while the query is empty (stale ids ignored). */
-  recent?: { ids: string[]; label: string };
+  /** Shown as the leading group while the query is empty (pre-resolved by buildRecentCommands). */
+  recent?: { commands: PaletteCommand[]; label: string };
   onRun: (command: PaletteCommand) => void;
   onClose: () => void;
 };
@@ -102,7 +102,7 @@ export function CommandPalette({ open, commands, groupLabels, placeholder, empty
     if (event.key === 'Enter') {
       event.preventDefault();
       const command = flat[activeIndex];
-      if (command) onRun(command);
+      if (command && !command.disabled) onRun(command);
     }
   };
 
@@ -163,17 +163,21 @@ function PaletteGroupView({ group, activeIndex, flat, setActiveIndex, onRun, que
             id={`command-palette-option-${index}`}
             role="option"
             aria-selected={active}
-            className="command-palette-item"
+            aria-disabled={command.disabled || undefined}
+            className={`command-palette-item${command.disabled ? ' command-palette-item-disabled' : ''}`}
             data-active={active || undefined}
             onMouseEnter={() => setActiveIndex(index)}
             onMouseDown={(event) => event.preventDefault()}
-            onClick={() => onRun(command)}
+            onClick={() => !command.disabled && onRun(command)}
           >
             <span className="command-palette-item-icon" aria-hidden="true">{command.icon ? <Icon name={command.icon as IconName} size={15} /> : null}</span>
-            <span className="command-palette-item-label" dir="auto">
-              {buildHighlightSegments(command.label, query).map((segment, segmentIndex) => segment.highlighted
-                ? <mark key={segmentIndex} className="command-palette-item-hl">{segment.text}</mark>
-                : <span key={segmentIndex}>{segment.text}</span>)}
+            <span className="command-palette-item-text">
+              <span className="command-palette-item-label" dir="auto">
+                {buildHighlightSegments(command.label, query).map((segment, segmentIndex) => segment.highlighted
+                  ? <mark key={segmentIndex} className="command-palette-item-hl">{segment.text}</mark>
+                  : <span key={segmentIndex}>{segment.text}</span>)}
+              </span>
+              {command.detail && <span className="command-palette-item-detail" dir="auto">{command.detail}</span>}
             </span>
             {command.hint && <kbd className="command-palette-item-hint">{command.hint}</kbd>}
           </li>
