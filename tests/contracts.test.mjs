@@ -99,7 +99,7 @@ test('Unified activity records preserve source and published post links', () => 
 test('operation tab includes current-tweet information and existing controls', () => {
   assert.match(uiSource, /export function CurrentTweetCard/);
   assert.match(uiSource, /CurrentTweetCard/);
-  assert.match(uiSource, /getTweetPreview\(item\.targetUrl, item\.label, 180\)/);
+  assert.match(uiSource, /getTweetPreview\(item\.targetUrl, item\.label \|\| t\('common\.unlabeledPost'\), 180\)/);
   assert.match(uiSource, /aria-label=\{t\('nav\.operation'\)\}/);
   assert.match(uiSource, /onClick=\{start\}/);
   assert.match(uiSource, /type: 'PAUSE'/);
@@ -406,7 +406,7 @@ test('Workspace extraction does not silently overwrite Queue data', () => {
   assert.match(serviceWorker, /QUEUE_REPLACE_HAS_EXECUTED_ITEMS/);
   assert.match(serviceWorker, /existingUrls/);
   assert.match(uiSource, /banks\.append/);
-  assert.match(uiSource, /تحتوي Queue على عناصر منشورة/);
+  assert.match(uiSource, /t\('confirm\.replacePublished'\)/);
   assert.match(uiSource, /onRestore/);
 });
 
