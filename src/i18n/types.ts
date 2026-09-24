@@ -19,6 +19,8 @@ export type TranslationTree = {
   ui: Record<string, string>;
   search: Record<string, string>;
   presets: Record<string, string>;
+  palette: Record<string, string>;
+  paletteKeywords: Record<string, string>;
   filters: Record<string, string>;
   sessions: Record<string, string>;
   history: Record<string, string>;
