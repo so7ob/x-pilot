@@ -32,6 +32,16 @@ export type SavePresetOutcome =
 
 export type DeletePresetOutcome = { ok: boolean; reason?: 'storage-failure' };
 
+export type RenamePresetOutcome =
+  | { ok: true; preset: FilterPreset }
+  | { ok: false; reason: 'empty-name' | 'name-too-long' | 'not-found' | 'storage-failure' };
+
+export type MovePresetDirection = 'up' | 'down';
+
+export type MovePresetOutcome =
+  | { ok: true; presets: FilterPreset[] }
+  | { ok: false; reason: 'not-found' | 'storage-failure' };
+
 const VIEWS: FilterPresetView[] = ['queue', 'banks', 'sessions', 'history'];
 
 export function isFilterPresetView(value: unknown): value is FilterPresetView {
@@ -119,6 +129,17 @@ export function hasFilterSelection(filters: SearchFilters): boolean {
     || Boolean(filters.dateTo);
 }
 
+/**
+ * Exact equality across every SearchFilters field (workspace scope included).
+ * Used to highlight the preset chip whose filters match the live view — after
+ * applying a preset, its chip is the active one; any manual filter change
+ * clears the highlight.
+ */
+export function filtersEqual(a: SearchFilters, b: SearchFilters): boolean {
+  const keys = Object.keys(emptySearchFilters) as (keyof SearchFilters)[];
+  return keys.every((key) => a[key] === b[key]);
+}
+
 async function readStore(): Promise<FilterPresetStore> {
   try {
     const stored = await globalThis.chrome?.storage?.local?.get(FILTER_PRESETS_KEY) as Record<string, unknown> | undefined;
@@ -165,6 +186,53 @@ export async function saveFilterPreset(view: FilterPresetView, rawName: string, 
     const preset: FilterPreset = { id: makePresetId(), name, view, filters: { ...filters }, createdAt: Date.now() };
     const ok = await writeStore({ ...store, [view]: [...existing, preset] });
     return ok ? { ok: true, preset } : { ok: false, reason: 'storage-failure' };
+  });
+}
+
+/**
+ * Renames a saved preset in place. Validation mirrors saveFilterPreset
+ * (trim + collapse whitespace, non-empty, max length). Order, filters and
+ * createdAt of the preset are untouched — only the name changes.
+ */
+export async function renameFilterPreset(view: FilterPresetView, presetId: string, rawName: string): Promise<RenamePresetOutcome> {
+  const name = normalizePresetName(rawName);
+  if (!name) return { ok: false, reason: 'empty-name' };
+  if (name.length > MAX_FILTER_PRESET_NAME_LENGTH) return { ok: false, reason: 'name-too-long' };
+
+  return queuePresetMutation(async () => {
+    const store = await readStore();
+    const existing = store[view] ?? [];
+    const index = existing.findIndex((preset) => preset.id === presetId);
+    if (index === -1) return { ok: false, reason: 'not-found' };
+
+    const renamed: FilterPreset = { ...existing[index], name };
+    const next = existing.map((preset, i) => (i === index ? renamed : preset));
+    const ok = await writeStore({ ...store, [view]: next });
+    return ok ? { ok: true, preset: renamed } : { ok: false, reason: 'storage-failure' };
+  });
+}
+
+/**
+ * Moves a preset one position up (earlier) or down (later) within its view.
+ * Moving past either end is a no-op success; unknown ids surface as
+ * 'not-found' so the UI can resync instead of silently assuming success.
+ */
+export async function moveFilterPreset(view: FilterPresetView, presetId: string, direction: MovePresetDirection): Promise<MovePresetOutcome> {
+  return queuePresetMutation(async () => {
+    const store = await readStore();
+    const existing = store[view] ?? [];
+    const index = existing.findIndex((preset) => preset.id === presetId);
+    if (index === -1) return { ok: false, reason: 'not-found' };
+
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= existing.length) {
+      return { ok: true, presets: existing };
+    }
+    const next = [...existing];
+    const [moved] = next.splice(index, 1);
+    next.splice(targetIndex, 0, moved);
+    const ok = await writeStore({ ...store, [view]: next });
+    return ok ? { ok: true, presets: next } : { ok: false, reason: 'storage-failure' };
   });
 }
 

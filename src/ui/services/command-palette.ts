@@ -29,11 +29,16 @@ export type PaletteCommand = {
   hint?: string;
 };
 
+export type PaletteGroupKind = PaletteCommandKind | 'recent';
+
 export type PaletteGroup = {
-  kind: PaletteCommandKind;
+  kind: PaletteGroupKind;
   label: string;
   commands: PaletteCommand[];
 };
+
+/** Cap for the recent-commands list shown when the palette opens empty. */
+export const MAX_RECENT_COMMANDS = 5;
 
 /** Characters removed entirely before matching (harakat + tatweel). */
 const ARABIC_MARKS = /[\u064B-\u065F\u0670\u06D6-\u06ED\u0640]/g;
@@ -61,16 +66,62 @@ export function filterCommands(commands: PaletteCommand[], query: string): Palet
   return commands.filter((command) => commandMatches(command, normalizedQuery));
 }
 
-/** Groups a flat command list, preserving kind order and dropping empty groups. */
-export function groupCommands(commands: PaletteCommand[], labels: Record<PaletteCommandKind, string>): PaletteGroup[] {
+/**
+ * Groups a flat command list, preserving kind order and dropping empty groups.
+ * When `recent.ids` resolves against the command list, a leading "recent"
+ * group (in recency order, most recent first) is inserted and those commands
+ * are removed from their kind groups to avoid duplication. Unknown ids and
+ * duplicates are ignored, so stale/corrupt recent lists degrade gracefully.
+ */
+export function groupCommands(
+  commands: PaletteCommand[],
+  labels: Record<PaletteCommandKind, string>,
+  recent?: { ids: string[]; label: string },
+): PaletteGroup[] {
+  const byId = new Map(commands.map((command) => [command.id, command]));
+  const seen = new Set<string>();
+  const recentCommands: PaletteCommand[] = [];
+  if (recent) {
+    for (const id of recent.ids) {
+      if (seen.has(id)) continue;
+      const command = byId.get(id);
+      if (!command) continue;
+      seen.add(id);
+      recentCommands.push(command);
+    }
+  }
+  const rest = commands.filter((command) => !seen.has(command.id));
   const order: PaletteCommandKind[] = ['tab', 'action', 'workspace'];
-  return order
-    .map((kind) => ({
-      kind,
-      label: labels[kind],
-      commands: commands.filter((command) => command.kind === kind),
-    }))
-    .filter((group) => group.commands.length > 0);
+  const groups: PaletteGroup[] = [];
+  if (recent && recentCommands.length > 0) {
+    groups.push({ kind: 'recent', label: recent.label, commands: recentCommands });
+  }
+  for (const kind of order) {
+    const kindCommands = rest.filter((command) => command.kind === kind);
+    if (kindCommands.length > 0) groups.push({ kind, label: labels[kind], commands: kindCommands });
+  }
+  return groups;
+}
+
+/**
+ * Records a command execution in the recent list: most-recent first, no
+ * duplicates, capped at MAX_RECENT_COMMANDS. Pure — persistence is the
+ * host's job (recent-commands service).
+ */
+export function recordRecentCommand(recent: string[], id: string): string[] {
+  const next = [id, ...recent.filter((existing) => existing !== id)];
+  return next.slice(0, MAX_RECENT_COMMANDS);
+}
+
+/** Drops non-string/empty ids, deduplicates and caps a stored recent list. */
+export function sanitizeRecentCommandIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.length === 0) continue;
+    seen.add(entry);
+  }
+  return [...seen].slice(0, MAX_RECENT_COMMANDS);
 }
 
 export type PaletteTabEntry = { id: string; label: string; icon?: string };
