@@ -153,7 +153,12 @@ type GroupViewProps = {
 function PaletteGroupView({ group, activeIndex, flat, setActiveIndex, onRun, query }: GroupViewProps) {
   return (
     <>
-      <li className={`command-palette-group-label${group.kind === 'recent' ? ' command-palette-group-recent' : ''}`} role="presentation">{group.kind === 'recent' && <Icon name="clock" size={11} />}{group.label}</li>
+      <li className={`command-palette-group-label${group.kind === 'recent' ? ' command-palette-group-recent' : ''}`} role="presentation">
+        {group.kind === 'recent' && <Icon name="clock" size={11} />}
+        <span className="command-palette-group-text">{group.label}</span>
+        <span className="command-palette-group-rule" aria-hidden="true" />
+        <span className="command-palette-group-count" aria-hidden="true">{group.commands.length}</span>
+      </li>
       {group.commands.map((command) => {
         const index = flat.indexOf(command);
         const active = index === activeIndex;

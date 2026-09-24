@@ -119,9 +119,13 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
    both LTR and RTL instead of leaving two empty grid cells at the end. */
 .nav-group { display: contents; }
 .nav-group > span { display: none; }
-.tab-button { flex: 1 1 18%; min-width: 0; min-height: 47px; flex-direction: column; gap: 4px; padding: 7px 4px; border: 0; color: var(--color-text-3); background: transparent; font-size: 10px; }
+.tab-button { position: relative; flex: 1 1 18%; min-width: 0; min-height: 47px; flex-direction: column; gap: 4px; padding: 7px 4px; border: 0; color: var(--color-text-3); background: transparent; font-size: 10px; }
 .tab-button span { overflow: hidden; max-width: 100%; text-overflow: ellipsis; white-space: nowrap; }
 .tab-button.active { color: var(--color-primary); background: var(--color-surface); box-shadow: var(--shadow-sm); }
+/* Animated active-tab underline: grows from the inline-start edge; the
+   transform (not width) keeps it cheap and RTL-symmetric. */
+.tab-button::after { content: ''; position: absolute; bottom: 3px; inset-inline: 24%; height: 2px; border-radius: 999px; background: var(--color-primary); opacity: .9; transform: scaleX(0); transform-origin: center; transition: transform var(--transition-normal) ease; }
+.tab-button.active::after { transform: scaleX(1); }
 .tab-button .icon { opacity: .8; }
 .tab-button.active .icon { opacity: 1; }
 .shell-operation .tabs-bar { min-height: 11px; }
@@ -199,9 +203,13 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .paused-hint { margin-top: 12px; padding: 9px 11px; border-radius: var(--radius-md); color: var(--color-warning); background: var(--color-warning-bg); font-size: 12px; }
 
 .bank-cards, .workspace-list, .queue, .history-list, .diagnostics-checks { display: grid; gap: 9px; }
-.bank-card, .workspace-card { padding: 13px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast); }
+.bank-card, .workspace-card { position: relative; padding: 13px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast); }
 .bank-card:hover, .workspace-card:hover { border-color: #aac2df; box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .bank-card.selected, .workspace-card.active { border-color: #85b2e9; box-shadow: 0 0 0 3px #1667d914; }
+/* Accent stripe echoes the palette's active indicator for a consistent
+   "this one is selected" language across surfaces. */
+.bank-card.selected::before, .workspace-card.active::before { content: ''; position: absolute; inset-inline-start: -1px; top: 10px; bottom: 10px; width: 3px; border-radius: 999px; background: var(--color-primary); }
+.bank-card.selected, .workspace-card.active { position: relative; }
 .bank-card.archived, .workspace-card.archived { opacity: .65; background: var(--color-surface-2); }
 .bank-card-heading, .workspace-card-heading, .workspace-card-stats { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .bank-card-heading span, .bank-card > small, .workspace-card-heading p { color: var(--color-text-3); font-size: 10px; }
@@ -415,8 +423,11 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .empty-state { display: grid; justify-items: center; gap: 8px; padding: 30px 15px; color: var(--color-text-2); text-align: center; }
 .empty-state p { max-width: 280px; margin: 0; color: var(--color-text-3); font-size: 12px; }
 .empty-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; color: var(--color-primary); background: #e5f0ff; }
+/* Inset panel for "no rows match" lists (queue / banks / sessions / history):
+   dashed border reads as an intentional placeholder, not a broken list. */
+.empty-list-state { margin: 6px 2px; padding: 20px 14px; border: 1px dashed var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-2); color: var(--color-text-3); font-size: 12.5px; text-align: center; }
 /* Workspace color dot — mirrors the active workspace color from the switcher. */
-.workspace-color-dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; box-shadow: inset 0 0 0 1px #15355a26; }
+.workspace-color-dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; box-shadow: inset 0 0 0 1px #15355a26, 0 0 0 2px var(--color-surface); }
 .workspace-switcher-copy strong { align-self: center; }
 
 /* Inline clipboard actions (copy link / copy summary). */
@@ -449,6 +460,7 @@ h2, h3 { text-wrap: balance; }
   .session-summary, .bank-card, .workspace-card { transition: none; }
   .session-summary:hover, .bank-card:hover, .workspace-card:hover { transform: none; }
   .success-donut .donut-value { transition: none; }
+  .tab-button::after { transition: none; }
 }
 
 
@@ -463,16 +475,19 @@ h2, h3 { text-wrap: balance; }
 
 .command-palette-backdrop { position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding: 11vh 16px 16px; background: #0b152476; backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px); animation: palette-fade-in 150ms ease; }
 .command-palette { width: min(560px, 100%); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-lg); background: var(--color-surface); box-shadow: 0 24px 64px #0a183040, 0 4px 14px #0a183026; animation: palette-pop-in 180ms cubic-bezier(.2, .9, .3, 1.15); }
-.command-palette-input-row { display: flex; align-items: center; gap: 9px; padding: 13px 15px; border-bottom: 1px solid var(--color-border-subtle); color: var(--color-text-3); transition: color var(--transition-fast); }
-.command-palette-input-row:focus-within { color: var(--color-primary); }
+.command-palette-input-row { display: flex; align-items: center; gap: 9px; padding: 13px 15px; border-bottom: 1px solid var(--color-border-subtle); color: var(--color-text-3); transition: color var(--transition-fast), border-color var(--transition-fast); }
+.command-palette-input-row:focus-within { color: var(--color-primary); border-bottom-color: color-mix(in srgb, var(--color-primary) 45%, transparent); }
 .command-palette-input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; color: var(--color-text); font: inherit; font-size: 15px; }
 .command-palette-input::placeholder { color: var(--color-text-3); }
 .command-palette-esc { flex: none; font: inherit; font-size: 10px; line-height: 1; padding: 4px 7px; border: 1px solid var(--color-border); border-bottom-width: 2px; border-radius: 5px; background: var(--color-surface-2); color: var(--color-text-3); cursor: pointer; transition: border-color var(--transition-fast), color var(--transition-fast); }
 .command-palette-esc:hover { color: var(--color-text); border-color: var(--color-border-strong); }
 .command-palette-list { max-height: 46vh; overflow-y: auto; list-style: none; margin: 0; padding: 6px; }
-.command-palette-group-label { padding: 9px 10px 4px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--color-text-3); }
-.command-palette-group-label.command-palette-group-recent { display: flex; align-items: center; gap: 5px; }
-.command-palette-group-label.command-palette-group-recent .icon { color: var(--color-primary); }
+.command-palette-group-label { display: flex; align-items: center; gap: 7px; padding: 9px 10px 4px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--color-text-3); }
+.command-palette-group-label.command-palette-group-recent .icon { color: var(--color-primary); flex: none; }
+.command-palette-group-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Hairline rule bridges the label to the count chip; keeps rows scannable. */
+.command-palette-group-rule { flex: 1; height: 1px; background: var(--color-border-subtle); }
+.command-palette-group-count { flex: none; min-width: 17px; padding: 2px 5px; border: 1px solid var(--color-border-subtle); border-radius: 999px; background: var(--color-surface-2); color: var(--color-text-3); font-size: 9px; font-weight: 700; text-align: center; letter-spacing: 0; }
 .command-palette-item { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius-sm); cursor: pointer; color: var(--color-text); transition: background var(--transition-fast), opacity var(--transition-fast); }
 .command-palette-item[data-active="true"] { background: var(--color-surface-3); }
 .command-palette-item:active .command-palette-item-label { opacity: .7; }
@@ -537,6 +552,8 @@ h2, h3 { text-wrap: balance; }
   .palette-trigger kbd, .command-palette-esc, .command-palette-item-hint, .command-palette-footer kbd { border-color: #304157; background: #1c2839; color: #8293aa; }
   .command-palette-backdrop { background: #060b1480; }
   .command-palette { border-color: #3d5a80; box-shadow: 0 24px 64px #000000a8, 0 4px 14px #00000088; }
+  .command-palette-group-count { border-color: #26364b; background: #1c2839; color: #8293aa; }
+  .command-palette-item-detail { color: #7f92ab; }
   .command-palette-item-icon { border-color: #26364b; background: #1c2839; }
   .command-palette-item-label mark.command-palette-item-hl { color: #6fa9ef; text-decoration-color: #20b8d29e; }
   .backup-consent { border-color: #304157; border-inline-start-color: #3d8ce0; background: #16222f; }
