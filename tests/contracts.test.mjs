@@ -27,6 +27,7 @@ const storage = fs.readFileSync(path.join(root, 'src/storage/storage-repository.
 const pagination = fs.readFileSync(path.join(root, 'src/domain/pagination.ts'), 'utf8');
 const errorMessages = fs.readFileSync(path.join(root, 'src/ui/services/error-messages.ts'), 'utf8');
 const bankTransfer = fs.readFileSync(path.join(root, 'src/domain/bank-transfer.ts'), 'utf8');
+const recoverySource = fs.readFileSync(path.join(root, 'src/domain/recovery.ts'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
 
  test('package and manifest versions stay synchronized', () => {
@@ -580,6 +581,7 @@ test('Automation engine is an isolated module; the service worker only routes', 
   assert.match(serviceWorker, /case 'RESUME': return resumeSession\(\)/);
   assert.match(serviceWorker, /case 'STOP': return stopSession\(\)/);
   assert.match(serviceWorker, /case 'RECOVERY_START_OVER': return startOverSession\(\)/);
+  assert.match(serviceWorker, /case 'START_SCHEDULED_NOW': return startScheduledNow\(\)/);
   assert.match(serviceWorker, /case 'CANCEL_SCHEDULE': return cancelScheduledStart\(\)/);
   assert.match(serviceWorker, /case 'SCHEDULE': return scheduleSession/);
   assert.match(serviceWorker, /case 'PREFLIGHT_CHECK': \{\s*const workspaceId[\s\S]*?return performPreflight/);
@@ -601,4 +603,36 @@ test('Engine module preserves the publish safety invariants', () => {
   assert.match(engineSource, /renewStartLock/);
   assert.match(engineSource, /performPreflight\(/); // preflight gates start/schedule
   assert.match(engineSource, /persistAcrossSessions: true/); // alarms survive restarts
+});
+
+test('Missed-schedule recovery stays user-driven and engine-owned', () => {
+  // Pure detection lives in the recovery domain with an explicit grace window.
+  assert.match(recoverySource, /MISSED_SCHEDULE_GRACE_MS/);
+  assert.match(recoverySource, /export function detectMissedSchedule/);
+  // The engine op requires a SCHEDULED session and never starts blindly.
+  assert.match(engineSource, /export async function startScheduledNow/);
+  const opBody = engineSource.slice(engineSource.indexOf('export async function startScheduledNow'), engineSource.indexOf('export async function pauseSession'));
+  assert.match(opBody, /status !== 'SCHEDULED'/); // only missed scheduled sessions
+  assert.match(opBody, /performPreflight\(workspaceId\)/); // readiness gate before publishing
+  assert.match(opBody, /acquireStartLock/); // start lease held
+  assert.match(opBody, /chrome\.alarms\.clear\(SCHEDULE_ALARM_NAME\)/); // missed alarm cannot double-fire
+  assert.doesNotMatch(opBody, /setTimeout/); // scheduling stays on chrome.alarms
+  // The card only appears for missed SCHEDULED sessions and is fully localized.
+  const operationTab = fs.readFileSync(path.join(root, 'src/ui/tabs/OperationTab.tsx'), 'utf8');
+  assert.match(operationTab, /detectMissedSchedule\(session, nowMs\)/);
+  assert.match(operationTab, /type: 'START_SCHEDULED_NOW'/);
+  assert.match(operationTab, /type: 'CANCEL_SCHEDULE'/);
+  const cards = fs.readFileSync(path.join(root, 'src/ui/components/operation-cards.tsx'), 'utf8');
+  assert.match(cards, /export function MissedScheduleCard/);
+  assert.match(cards, /recovery\.missedTitle/);
+  assert.match(cards, /recovery\.missedDescription/);
+  assert.match(cards, /recovery\.startNow/);
+  assert.doesNotMatch(cards, /startScheduledNow|chrome\.alarms/); // UI never schedules or publishes directly
+  // i18n parity for the new keys.
+  for (const file of ['src/i18n/ar.ts', 'src/i18n/en.ts']) {
+    const source = fs.readFileSync(path.join(root, file), 'utf8');
+    for (const key of ['missedTitle', 'missedBadge', 'missedDescription', 'missedHint', 'startNow', 'startedNow']) {
+      assert.match(source, new RegExp(key + ':'), file + ' missing ' + key);
+    }
+  }
 });

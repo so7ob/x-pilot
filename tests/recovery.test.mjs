@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { hasFutureRecoveryAlarm, normalizeRecovery, buildStartOverQueue, countStartOverResets } from '../src/domain/recovery.ts';
+import { hasFutureRecoveryAlarm, normalizeRecovery, buildStartOverQueue, countStartOverResets, detectMissedSchedule, MISSED_SCHEDULE_GRACE_MS } from '../src/domain/recovery.ts';
 
 const item = (id, position, status) => ({
   id,
@@ -105,4 +105,33 @@ test('start over preserves positions, fingerprints, and duplicate metadata', () 
   assert.equal(reset.normalizedContent, 'محتوى');
   assert.equal(reset.duplicateStatus, 'UNIQUE');
   assert.equal(reset.targetUrl, source.targetUrl);
+});
+
+test('detectMissedSchedule ignores future scheduled starts', () => {
+  const now = 10_000_000;
+  assert.equal(detectMissedSchedule({ status: 'SCHEDULED', scheduledStartAt: now + 60_000 }, now), false);
+});
+
+test('detectMissedSchedule stays quiet within the grace window (alarm may still fire)', () => {
+  const now = 10_000_000;
+  assert.equal(detectMissedSchedule({ status: 'SCHEDULED', scheduledStartAt: now - 30_000 }, now), false);
+  assert.equal(detectMissedSchedule({ status: 'SCHEDULED', scheduledStartAt: now - MISSED_SCHEDULE_GRACE_MS }, now), false);
+});
+
+test('detectMissedSchedule flags past-due starts beyond the grace window', () => {
+  const now = 10_000_000;
+  assert.equal(detectMissedSchedule({ status: 'SCHEDULED', scheduledStartAt: now - MISSED_SCHEDULE_GRACE_MS - 1 }, now), true);
+  assert.equal(detectMissedSchedule({ status: 'SCHEDULED', scheduledStartAt: now - 3 * 60 * 60 * 1000 }, now), true);
+});
+
+test('detectMissedSchedule only ever applies to SCHEDULED sessions with a valid timestamp', () => {
+  const now = 10_000_000;
+  const past = now - MISSED_SCHEDULE_GRACE_MS - 5_000;
+  assert.equal(detectMissedSchedule({ status: 'PAUSED', scheduledStartAt: past }, now), false);
+  assert.equal(detectMissedSchedule({ status: 'RUNNING', scheduledStartAt: undefined }, now), false);
+  assert.equal(detectMissedSchedule({ status: 'WAITING', scheduledStartAt: past }, now), false);
+  assert.equal(detectMissedSchedule({ status: 'SCHEDULED', scheduledStartAt: undefined }, now), false);
+  assert.equal(detectMissedSchedule({ status: 'SCHEDULED', scheduledStartAt: Number.NaN }, now), false);
+  assert.equal(detectMissedSchedule(null, now), false);
+  assert.equal(detectMissedSchedule(undefined, now), false);
 });

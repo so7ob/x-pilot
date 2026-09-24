@@ -1,7 +1,7 @@
 import type { DryRunResult, PreflightResult, QueueItem } from '../../domain/models';
 import { getTweetPreview } from '../../extraction/tweet-preview';
 import { getUserFacingMessage } from '../services/error-messages';
-import { formatTime, useI18n } from '../../i18n';
+import { formatDateTime, formatTime, useI18n } from '../../i18n';
 
 export function CurrentTweetCard({ item, position, logoUrl }: { item?: QueueItem; position?: number; logoUrl: string }) {
   const { t } = useI18n();
@@ -11,6 +11,11 @@ export function CurrentTweetCard({ item, position, logoUrl }: { item?: QueueItem
 export function RecoveryCard({ logoUrl, failedCount, onResume, onStartOver, onCancel }: { logoUrl: string; failedCount: number; onResume: () => void; onStartOver: () => void; onCancel: () => void }) {
   const { t } = useI18n();
   return <section className="card recovery-card"><div className="current-brand"><img src={logoUrl} alt="" /><div><span className="eyebrow">X-PILOT</span><h2>{t('recovery.title')}</h2></div></div><p className="muted">{t('recovery.message')}</p><p className="recovery-hint muted">{t('recovery.startOverHint')}</p><div className="recovery-actions"><button className="primary" onClick={onResume}>{t('actions.resume')} {t('common.queue')}</button><button onClick={onStartOver}>{t('recovery.startOver')}{failedCount > 0 && <span className="recovery-count">{failedCount}</span>}</button><button className="danger" onClick={onCancel}>{t('recovery.cancelSession')}</button></div></section>;
+}
+
+export function MissedScheduleCard({ logoUrl, scheduledAt, onStartNow, onCancelSchedule }: { logoUrl: string; scheduledAt: number; onStartNow: () => void; onCancelSchedule: () => void }) {
+  const { t } = useI18n();
+  return <section className="card recovery-card missed-card" aria-live="polite"><div className="current-brand"><img src={logoUrl} alt="" /><div><span className="eyebrow">X-PILOT</span><h2>{t('recovery.missedTitle')}</h2></div><span className="missed-badge">{t('recovery.missedBadge')}</span></div><p className="muted">{t('recovery.missedDescription', { time: formatDateTime(scheduledAt) })}</p><p className="recovery-hint muted">{t('recovery.missedHint')}</p><div className="recovery-actions missed-actions"><button className="primary" onClick={onStartNow}>{t('recovery.startNow')}</button><button className="danger" onClick={onCancelSchedule}>{t('ui.cancelSchedule')}</button></div></section>;
 }
 
 export function PreflightCard({ result, onCheck }: { result: PreflightResult | null; onCheck: () => void }) {
