@@ -25,6 +25,7 @@ const models = fs.readFileSync(path.join(root, 'src/domain/models.ts'), 'utf8');
 const storage = fs.readFileSync(path.join(root, 'src/storage/storage-repository.ts'), 'utf8');
 const pagination = fs.readFileSync(path.join(root, 'src/domain/pagination.ts'), 'utf8');
 const errorMessages = fs.readFileSync(path.join(root, 'src/ui/services/error-messages.ts'), 'utf8');
+const bankTransfer = fs.readFileSync(path.join(root, 'src/domain/bank-transfer.ts'), 'utf8');
 const styles = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
 
  test('package and manifest versions stay synchronized', () => {
@@ -501,4 +502,33 @@ test('daily-limit internal code is translated only at the UI presentation bounda
   assert.match(errorMessages, /X_DAILY_POST_LIMIT_REACHED/);
   assert.match(errorMessages, /errors\.dailyPostLimitReached/);
   assert.match(uiSource, /getUserFacingMessage/);
+});
+
+test('bank import validation is delegated to the domain layer, not the service worker', () => {
+  assert.match(serviceWorker, /import \{ buildBankExport, buildBanksExport, parseBankImport \} from '\.\.\/domain\/bank-transfer'/);
+  assert.match(serviceWorker, /case 'EXPORT_BANKS'/);
+  assert.match(serviceWorker, /case 'IMPORT_BANKS'/);
+  assert.match(serviceWorker, /const imported = parseBankImport\(message\.payload\)/);
+  assert.match(storage, /export async function importBanks\(workspaceId: string, banks: TweetBank\[\]\)/);
+  const importBanksBody = storage.match(/export async function importBanks\([\s\S]*?\n\}/)[0];
+  assert.doesNotMatch(importBanksBody, /queue|session/i, 'importBanks must only write banks and never touch queue or sessions');
+});
+
+test('bank export envelope never embeds workspace isolation identifiers', () => {
+  assert.match(bankTransfer, /export function buildBankExport\(/);
+  assert.match(bankTransfer, /export function buildBanksExport\(/);
+  const payloadBuilder = bankTransfer.match(/export function buildBankExportPayload\([\s\S]*?\n\}/)[0];
+  assert.doesNotMatch(payloadBuilder, /workspaceId/);
+  assert.doesNotMatch(payloadBuilder, /\bid:/);
+  assert.match(bankTransfer, /SUPPORTED_BANK_EXPORT_FORMAT_VERSION = 1/);
+});
+
+test('tweet bank export and import are exposed through localized UI actions', () => {
+  assert.match(uiSource, /type: 'EXPORT_BANKS'/);
+  assert.match(uiSource, /type: 'IMPORT_BANKS'/);
+  assert.match(uiSource, /t\('banks\.export'\)/);
+  assert.match(uiSource, /t\('banks\.exportAll'\)/);
+  assert.match(uiSource, /t\('banks\.import'\)/);
+  assert.match(errorMessages, /BANK_IMPORT_INVALID/);
+  assert.match(errorMessages, /errors\.bankImportInvalid/);
 });
