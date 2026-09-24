@@ -52,6 +52,8 @@
     --color-warning-bg: #3b2d11;
     --color-danger-bg: #3b2022;
   }
+  /* Component-level dark overrides live at the end of the file so they win
+     the cascade against their light base rules (equal specificity). */
 }
 
 * { box-sizing: border-box; }
@@ -393,6 +395,20 @@ h2, h3 { text-wrap: balance; }
   .session-summary, .bank-card, .workspace-card { transition: none; }
   .session-summary:hover, .bank-card:hover, .workspace-card:hover { transform: none; }
   .success-donut .donut-value { transition: none; }
+}
+
+/* Dark theme: component overrides — placed last so they win the cascade
+   against the light base rules above (media queries add no specificity). */
+@media (prefers-color-scheme: dark) {
+  .running-workspace { border-color: #29456d; background: #14263c; }
+  .operation-hero { border-color: #29456d; background: radial-gradient(circle at 100% 0, #1b2f4a, transparent 45%), var(--color-surface); }
+  .dashboard-countdown { border-color: #29456d; }
+  .notice { border-color: #304157; }
+  .notice-info { border-color: #29456d; background: #14263c; }
+  .notice-error { border-color: #6b2f2c; background: var(--color-danger-bg); }
+  .empty-icon { background: #1b2f4a; color: #6fa9ef; }
+  .bank-card:hover, .workspace-card:hover, .session-summary:hover { border-color: #3d5a80; }
+  .bank-card.selected, .workspace-card.active { border-color: #3d5a80; box-shadow: 0 0 0 3px #1667d92e; }
 }
 
 footer { margin: 18px 2px 6px; }
