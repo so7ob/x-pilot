@@ -693,6 +693,29 @@ test('Every engine notification is translatable through the key-first notifyEven
   assert.doesNotMatch(engineSource, /تعذر العثور على عناصر النشر/, 'call sites must not embed Arabic notification literals');
 });
 
+test('UI clipboard actions, workspace color dot, and analytics donut are localized and read-only', () => {
+  // Clipboard helpers exist and report through localized notices only.
+  assert.match(uiSource, /navigator\.clipboard\.writeText/);
+  assert.match(uiSource, /t\('common\.copied'\)/);
+  assert.match(uiSource, /t\('common\.copyFailed'\)/);
+  assert.match(uiSource, /t\('history\.copyLink'\)/);
+  assert.match(uiSource, /t\('sessions\.copySummary'\)/);
+  assert.doesNotMatch(uiSource, /fetch\([^)]*clipboard/, 'clipboard data must never leave the local clipboard');
+  // Workspace color dot: decorative, mirrors the existing Workspace.color field.
+  assert.match(uiSource, /workspace-color-dot/);
+  assert.match(uiSource, /activeWorkspace\?\.color/);
+  assert.match(uiSource, /aria-hidden="true" \/>/, 'the color dot must stay decorative');
+  // Analytics donut derives from the existing successRate metric (no new data source).
+  const analyticsTab = fs.readFileSync(path.join(root, 'src/ui/tabs/AnalyticsTab.tsx'), 'utf8');
+  assert.match(analyticsTab, /SuccessDonut rate=\{workspace\.successRate\}/);
+  assert.match(analyticsTab, /aria-label=\{`\$\{clamped\}%`\}/);
+  // Session view dates use the locale-aware formatter — no browser-default or hardcoded 'ar' dates.
+  assert.doesNotMatch(uiSource, /toLocaleString\('ar'\)/);
+  assert.doesNotMatch(uiSource, /new Date\(record\.startedAt\)\.toLocaleString\(\)/);
+  assert.doesNotMatch(uiSource, /new Date\(attempt\.timestamp\)\.toLocaleString\(\)/);
+  assert.doesNotMatch(analyticsTab, /toLocaleString\('ar'\)/);
+});
+
 test('Header renders the session status exactly once and pagination has no dead code', () => {
   const headerStart = uiSource.indexOf('<div className="header-status">');
   const headerEnd = uiSource.indexOf('</header>', headerStart);
