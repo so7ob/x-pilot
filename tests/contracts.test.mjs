@@ -532,3 +532,28 @@ test('tweet bank export and import are exposed through localized UI actions', ()
   assert.match(errorMessages, /BANK_IMPORT_INVALID/);
   assert.match(errorMessages, /errors\.bankImportInvalid/);
 });
+
+test('Start Over recovery is delegated to the domain and never auto-publishes', () => {
+  assert.match(models, /type: 'RECOVERY_START_OVER'/);
+  assert.match(serviceWorker, /case 'RECOVERY_START_OVER'/);
+  assert.match(serviceWorker, /buildStartOverQueue\(state\.queue/);
+  const startOverCase = serviceWorker.match(/case 'RECOVERY_START_OVER': \{[\s\S]*?\n    \}/)[0];
+  assert.doesNotMatch(startOverCase, /processCurrentItem/, 'Start Over must never trigger publishing');
+  assert.match(startOverCase, /releaseAutomationOwner/);
+  assert.match(startOverCase, /chrome\.alarms\.clear\(ALARM_NAME\)/);
+  const recoveryDomain = fs.readFileSync(path.join(root, 'src/domain/recovery.ts'), 'utf8');
+  const startOverBuilder = recoveryDomain.match(/export function buildStartOverQueue\([\s\S]*?\n\}/)[0];
+  assert.doesNotMatch(startOverBuilder, /status: 'PENDING'[\s\S]{0,80}PUBLISHING/, 'PUBLISHING must never become PENDING');
+  assert.match(recoveryDomain, /PUBLISHED_UNVERIFIED/);
+});
+
+test('Recovery card exposes three localized actions including Start Over and Cancel', () => {
+  assert.match(uiSource, /failedCount/);
+  assert.match(uiSource, /onStartOver/);
+  assert.match(uiSource, /onCancel/);
+  assert.match(uiSource, /t\('recovery\.startOver'\)/);
+  assert.match(uiSource, /t\('recovery\.cancelSession'\)/);
+  assert.match(uiSource, /t\('recovery\.confirmStartOver'/);
+  const styles2 = fs.readFileSync(path.join(root, 'src/ui/styles.css'), 'utf8');
+  assert.match(styles2, /\.recovery-actions \{ display: grid/);
+});

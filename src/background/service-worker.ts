@@ -4,7 +4,7 @@ import { classifyBankDiff, mergeSelectedDiffItems } from '../domain/bank-diff';
 import { buildBankExport, buildBanksExport, parseBankImport } from '../domain/bank-transfer';
 import { fingerprintTweet } from '../domain/content-fingerprint';
 import { runPreflight } from '../domain/preflight';
-import { hasFutureRecoveryAlarm, normalizeRecovery } from '../domain/recovery';
+import { hasFutureRecoveryAlarm, normalizeRecovery, buildStartOverQueue, countStartOverResets } from '../domain/recovery';
 import { canStartItem, getNextPendingItem, getNextRunnableItem, isTerminalItem } from '../domain/state-machine';
 import { extractLinksFromValues } from '../extraction/bank-parser';
 import { getNextAllowedPublishingTime } from '../domain/scheduling';
@@ -955,6 +955,23 @@ async function handleMessage(message: RuntimeMessage): Promise<unknown> {
       const result = stopped.session ? await closeAutomationTabIfConfigured(stopped.session) : stopped;
       if (result.workspaceId) await releaseAutomationOwner(result.workspaceId);
       return result;
+    }
+    case 'RECOVERY_START_OVER': {
+      const now = Date.now();
+      await chrome.alarms.clear(ALARM_NAME);
+      await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
+      let resetCount = 0;
+      const restarted = await updateRuntimeState((state) => {
+        resetCount = countStartOverResets(state.queue);
+        const queue = buildStartOverQueue(state.queue, now);
+        return { ...state, queue, session: state.session ? { ...state.session, status: 'STOPPED' as const, scheduledStartAt: undefined, nextRunAt: undefined, currentItemId: undefined, currentIndex: 0, total: queue.length, updatedAt: now } : null };
+      });
+      if (restarted.session) await syncHistoricalSession(restarted, 'STOPPED');
+      const closed = restarted.session ? await closeAutomationTabIfConfigured(restarted.session) : restarted;
+      if (closed.workspaceId) await releaseAutomationOwner(closed.workspaceId);
+      const next: AppState = { workspaceId: closed.workspaceId, queue: closed.queue, session: closed.session, history: closed.history };
+      await broadcast(next);
+      return { ...next, resetCount };
     }
     case 'SKIP_CURRENT': return commitQueueMutation((state) => ({ ...state, queue: state.queue.map((item) => item.id === state.session?.currentItemId ? { ...item, status: 'SKIPPED', updatedAt: Date.now() } : item) }));
     case 'RETRY_ITEM': return commitQueueMutation((state) => ({ ...state, queue: state.queue.map((item) => item.id === message.itemId ? { ...item, status: 'PENDING', attempts: 0, lastError: undefined, publishedAt: undefined, publishIntentId: undefined, publishStartedAt: undefined, publishSubmittedAt: undefined, updatedAt: Date.now() } : item) }));
