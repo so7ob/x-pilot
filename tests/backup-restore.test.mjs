@@ -14,7 +14,8 @@ test('Full Backup contains all durable local data and excludes transient automat
   assert.match(storage, /export async function exportBackup/);
   assert.match(storage, /workspaces: workspaces\.map/);
   assert.match(storage, /automationWorkspaceId: undefined/);
-  assert.match(storage, /formatVersion: 2/);
+  assert.match(storage, /formatVersion: uiPreferences \? 3 : 2/);  // v3 only with explicit consent
+  assert.doesNotMatch(storage, /formatVersion: 2, appVersion/, 'unconditional v2 envelope must be gone');
   assert.match(storage, /session: null/);
   assert.match(storage, /V4_RUNTIME_KEY/);
 });

@@ -332,7 +332,7 @@ async function handleMessage(message: RuntimeMessage): Promise<unknown> {
       return stored[DRY_RUN_KEY] ?? null;
     }
     case 'EXPORT_BACKUP':
-      return exportBackup();
+      return exportBackup(message.includeUiPreferences === true);
     case 'VALIDATE_BACKUP':
       return validateBackup(message.backup);
     case 'RESTORE_BACKUP': {
