@@ -118,6 +118,30 @@ test('Service Worker exposes live engine and automation-tab connectivity status'
   assert.match(engineSource, /await chrome\.tabs\.get\(session\.automationTabId\)/);
 });
 
+test('X adapter keeps DOM coupling isolated and covered by drift-guard fixtures', () => {
+  // jsdom is a test-only dependency: it must never ship in the extension bundle.
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.ok(pkg.devDependencies?.jsdom, 'jsdom must stay a devDependency for DOM fixtures');
+  assert.equal(pkg.dependencies?.jsdom, undefined, 'jsdom must never become a runtime dependency');
+  // The adapter is the only DOM-coupled publish component and must stay free of extension APIs.
+  assert.doesNotMatch(contentAdapter, /from\s+'chrome/, 'adapter must not import chrome APIs');
+  assert.doesNotMatch(contentAdapter, /chrome\.(storage|alarms|runtime|notifications)/, 'adapter must stay a pure DOM module');
+  // The DOM fixture suite must keep covering every selector family the adapter depends on.
+  const domFixtures = fs.readFileSync(path.join(root, 'tests/x-provider-dom.test.mjs'), 'utf8');
+  assert.match(domFixtures, /tweetTextarea_0/, 'fixtures must cover the modern composer testid');
+  assert.match(domFixtures, /contenteditable/, 'fixtures must cover the contenteditable composer');
+  assert.match(domFixtures, /textarea aria-label/, 'fixtures must cover the legacy textarea composer');
+  assert.match(domFixtures, /tweetButtonInline/, 'fixtures must cover the inline publish button testid');
+  assert.match(domFixtures, /aria-label="نشر"/, 'fixtures must cover the Arabic publish button');
+  assert.match(domFixtures, /NOT_LOGGED_IN/, 'fixtures must cover login classification');
+  assert.match(domFixtures, /CAPTCHA_OR_SECURITY_CHALLENGE/, 'fixtures must cover challenge classification');
+  assert.match(domFixtures, /X_DAILY_POST_LIMIT_REACHED/, 'fixtures must cover daily-limit classification');
+  assert.match(domFixtures, /WRONG_HOST/, 'fixtures must cover host gating');
+  assert.match(domFixtures, /getPublishedPostUrl/, 'fixtures must cover published-post URL extraction');
+  // The adapter's defensive fallback must stay in place for future markup variants.
+  assert.match(contentAdapter, /data-testid\^="tweetTextarea"/, 'composer prefix fallback selector must be kept');
+});
+
 test('Dry Run exposes both modes and does not use the publish action', () => {
   assert.match(models, /DryRunItemStatus/);
   assert.match(models, /DRY_RUN_FIRST/);
@@ -153,7 +177,7 @@ test('Phase 2 exposes persistent scheduling, profiles, notifications, and Badge 
   assert.match(engineSource, /chrome\.alarms\.create\(SCHEDULE_ALARM_NAME/);
   assert.match(engineSource, /getNextAllowedPublishingTime/);
   assert.match(engineSource, /chrome\.notifications\.create/);
-  assert.match(engineSource, /فشل عنصر/);
+  assert.match(engineSource, /ITEM_FAILED: defineEvent\('notifications\.failedItemTitle'/);
   assert.match(engineSource, /chrome\.action\.setBadgeText/);
   assert.match(uiSource, /ui\.schedule/);
   assert.match(uiSource, /ui\.reschedule/);
@@ -173,7 +197,7 @@ test('Dry Run results show item number and preview without exposing target URLs'
 test('Scheduled Alarm creates a session when Queue has no prior session and reports empty Queue', () => {
   assert.match(engineSource, /current\.session \?\? \{/);
   assert.match(engineSource, /status: 'SCHEDULED'/);
-  assert.match(engineSource, /لا يوجد عنصر Queue قابل للتشغيل/);
+  assert.match(engineSource, /SCHEDULE_START_FAILED: defineEvent\('notifications\.scheduleStartFailedTitle'/);
   assert.match(engineSource, /handleScheduledStart/);
 });
 
@@ -637,30 +661,59 @@ test('Missed-schedule recovery stays user-driven and engine-owned', () => {
   }
 });
 
-test('Every engine notification is translatable through the notifyEvent bridge', () => {
-  const bridge = engineSource.slice(engineSource.indexOf('export async function notifyEvent'), engineSource.indexOf('export async function updateBadge'));
-  const extractTableKeys = (tableName) => {
-    const tableStart = bridge.indexOf(`const ${tableName}`);
-    const tableEnd = bridge.indexOf('};', tableStart);
-    return [...bridge.slice(tableStart, tableEnd).matchAll(/'([^']+)':/g)].map((m) => m[1]);
-  };
-  const titleKeys = extractTableKeys('titleKeys');
-  const messageKeys = extractTableKeys('messageKeys');
-  const dynamicSources = [...bridge.matchAll(/pattern: \/(\^[^/]+)\/u/g)].map((m) => m[1]);
-  assert.ok(titleKeys.length >= 13, 'notification title table must keep covering all titles');
-  assert.ok(messageKeys.length >= 10, 'notification message table must keep covering all messages');
-  // Walk every call site: the title must be mapped; literal or template messages must be mapped or dynamic.
-  const callSites = [...engineSource.matchAll(/notifyEvent\('([^']+)', ([^;]+?)\);/g)];
-  assert.ok(callSites.length >= 12, 'engine notification call sites must stay covered');
-  for (const [, title, messageExpr] of callSites) {
-    assert.ok(titleKeys.includes(title), `unmapped notification title: ${title}`);
-    const literal = messageExpr.startsWith('\'') ? messageExpr.slice(1, -1) : null;
-    if (literal !== null) {
-      const dynamic = dynamicSources.some((source) => new RegExp(source.replace(/\\/g, '\\'), 'u').test(literal));
-      assert.ok(messageKeys.includes(literal) || dynamic || /^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$/.test(literal), `unmapped notification message: ${literal}`);
-    }
+test('Every engine notification is translatable through the key-first notifyEvent bridge', () => {
+  const bridge = engineSource.slice(engineSource.indexOf('export const NOTIFICATION_EVENTS'), engineSource.indexOf('export async function updateBadge'));
+  // The bridge must be key-first: a typed registry + (key, params) signature.
+  assert.match(bridge, /export type NotificationEventKey = keyof typeof NOTIFICATION_EVENTS/);
+  assert.match(engineSource, /export async function notifyEvent\(event: NotificationEventKey, params\?: NotificationParams\)/);
+  // Registry size floor: one entry per engine notification event.
+  const registryKeys = [...bridge.matchAll(/^  ([A-Z][A-Z0-9_]+): defineEvent\('/gm)].map((m) => m[1]);
+  assert.ok(registryKeys.length >= 16, `notification registry must keep covering all events (found ${registryKeys.length})`);
+  // Walk every call site: keys only — no user-facing literals may leak back in.
+  const callSites = [...engineSource.matchAll(/notifyEvent\('([A-Z][A-Z0-9_]+)'/g)].map((m) => m[1]);
+  assert.ok(callSites.length >= 15, 'engine notification call sites must stay covered');
+  for (const key of callSites) assert.ok(registryKeys.includes(key), `call site uses unregistered notification event: ${key}`);
+  // No Arabic (or any string-literal) messages at call sites — key-first only.
+  const literalCallSites = [...engineSource.matchAll(/notifyEvent\('([X-X]?[^'][A-Za-z][^']*)'/g)].filter((m) => !registryKeys.includes(m[1]) && m[1].length > 2);
+  assert.equal(literalCallSites.length, 0, `notifyEvent call sites must only pass registry keys, found: ${literalCallSites.map((m) => m[1]).join(', ')}`);
+  // Every referenced i18n key (titles + messages + dynamic summary keys) must exist in ar AND en.
+  const ar = fs.readFileSync(path.join(root, 'src/i18n/ar.ts'), 'utf8');
+  const en = fs.readFileSync(path.join(root, 'src/i18n/en.ts'), 'utf8');
+  const referencedKeys = [...bridge.matchAll(/'(notifications\.[A-Za-z0-9]+)'/g)].map((m) => m[1]);
+  const summaryKeys = [...engineSource.matchAll(/summaryKey: preflight\.summaryKey/g)];
+  assert.ok(referencedKeys.length >= 20, 'registry must reference its title and message i18n keys');
+  assert.ok(summaryKeys.length >= 3, 'preflight failure call sites must forward the summary key');
+  for (const key of referencedKeys) {
+    const short = key.replace('notifications.', '');
+    assert.match(ar, new RegExp(`${short}:`), `ar.ts missing ${key}`);
+    assert.match(en, new RegExp(`${short}:`), `en.ts missing ${key}`);
   }
-  assert.match(bridge, /translateForLocale\(locale, message, messageParams/); // key-shaped messages resolve params
+  // The known regression: the controls-missing branch must be a registered event, not a ternary literal.
+  assert.match(engineSource, /CONTROLS_NOT_READY/);
+  assert.doesNotMatch(engineSource, /تعذر العثور على عناصر النشر/, 'call sites must not embed Arabic notification literals');
+});
+
+test('UI clipboard actions, workspace color dot, and analytics donut are localized and read-only', () => {
+  // Clipboard helpers exist and report through localized notices only.
+  assert.match(uiSource, /navigator\.clipboard\.writeText/);
+  assert.match(uiSource, /t\('common\.copied'\)/);
+  assert.match(uiSource, /t\('common\.copyFailed'\)/);
+  assert.match(uiSource, /t\('history\.copyLink'\)/);
+  assert.match(uiSource, /t\('sessions\.copySummary'\)/);
+  assert.doesNotMatch(uiSource, /fetch\([^)]*clipboard/, 'clipboard data must never leave the local clipboard');
+  // Workspace color dot: decorative, mirrors the existing Workspace.color field.
+  assert.match(uiSource, /workspace-color-dot/);
+  assert.match(uiSource, /activeWorkspace\?\.color/);
+  assert.match(uiSource, /aria-hidden="true" \/>/, 'the color dot must stay decorative');
+  // Analytics donut derives from the existing successRate metric (no new data source).
+  const analyticsTab = fs.readFileSync(path.join(root, 'src/ui/tabs/AnalyticsTab.tsx'), 'utf8');
+  assert.match(analyticsTab, /SuccessDonut rate=\{workspace\.successRate\}/);
+  assert.match(analyticsTab, /aria-label=\{`\$\{clamped\}%`\}/);
+  // Session view dates use the locale-aware formatter — no browser-default or hardcoded 'ar' dates.
+  assert.doesNotMatch(uiSource, /toLocaleString\('ar'\)/);
+  assert.doesNotMatch(uiSource, /new Date\(record\.startedAt\)\.toLocaleString\(\)/);
+  assert.doesNotMatch(uiSource, /new Date\(attempt\.timestamp\)\.toLocaleString\(\)/);
+  assert.doesNotMatch(analyticsTab, /toLocaleString\('ar'\)/);
 });
 
 test('Header renders the session status exactly once and pagination has no dead code', () => {

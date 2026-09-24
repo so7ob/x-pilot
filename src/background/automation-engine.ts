@@ -89,58 +89,58 @@ export async function getRuntimeStatus(): Promise<RuntimeStatus> {
 
 /**
  * Translates an engine notification into the user's locale.
- * Engine call sites pass canonical (Arabic) literals for exact messages, and
- * dynamic messages embed counts/dates. The bridge maps exact strings to i18n
- * keys, translates dynamic patterns with regexes, and resolves i18n-key-shaped
- * messages (e.g. preflight.summaryKey) with their interpolation parameters.
+ * Call sites are key-first: they pass a stable NOTIFICATION_EVENTS key and
+ * optional interpolation parameters — never user-facing literals. The
+ * registry maps each event to localized title/message keys, and dynamic
+ * values (counts, timestamps) are formatted per locale here so call sites
+ * stay locale-free. Every referenced i18n key must exist in BOTH the ar and
+ * en dictionaries — enforced by the notification contract test.
  */
-export async function notifyEvent(title: string, message: string, messageParams?: Record<string, string | number>): Promise<void> {
+export type NotificationParams = Record<string, string | number>;
+
+interface NotificationMessage {
+  key: string;
+  params?: NotificationParams;
+}
+
+interface NotificationSpec {
+  titleKey: string;
+  message: (params: NotificationParams | undefined, locale: import('../i18n/types.ts').Locale) => NotificationMessage;
+}
+
+const formatEventTime = (value: NotificationParams[string] | undefined, locale: import('../i18n/types.ts').Locale): string =>
+  value === undefined ? '' : formatDateTimeForLocale(value as number, locale);
+
+const defineEvent = (titleKey: string, message: NotificationSpec['message']): NotificationSpec => ({ titleKey, message });
+
+export const NOTIFICATION_EVENTS = {
+  SESSION_COMPLETED: defineEvent('notifications.sessionCompletedTitle', () => ({ key: 'notifications.sessionCompletedMessage' })),
+  SESSION_PAUSED: defineEvent('notifications.paused', () => ({ key: 'notifications.pausedMessage' })),
+  DAILY_LIMIT_STOP: defineEvent('notifications.dailyLimitTitle', () => ({ key: 'notifications.dailyLimit' })),
+  LOGIN_REQUIRED: defineEvent('notifications.interventionTitle', () => ({ key: 'notifications.loginRequired' })),
+  CONTROLS_NOT_READY: defineEvent('notifications.interventionTitle', () => ({ key: 'notifications.controlsMissing' })),
+  UNVERIFIED_RESULT_STOP: defineEvent('notifications.interventionTitle', () => ({ key: 'notifications.unverifiedStop' })),
+  CHALLENGE_STOP: defineEvent('notifications.challengeTitle', () => ({ key: 'notifications.challenge' })),
+  ITEM_FAILED: defineEvent('notifications.failedItemTitle', (params) => ({ key: 'notifications.failedItemMessage', params: { position: params?.position ?? 0, reason: params?.reason ?? '' } })),
+  PREFLIGHT_FAILED: defineEvent('notifications.preflightFailed', (params) => ({ key: String(params?.summaryKey ?? 'preflight.summaryKey'), params })),
+  SCHEDULED_FOR: defineEvent('notifications.scheduledTitle', (params, locale) => ({ key: 'notifications.scheduledFor', params: { time: formatEventTime(params?.time, locale) } })),
+  SCHEDULE_START_FAILED: defineEvent('notifications.scheduleStartFailedTitle', () => ({ key: 'notifications.noRunnableItems' })),
+  SCHEDULED_STARTED: defineEvent('notifications.startedTitle', () => ({ key: 'notifications.startedMessage' })),
+  ALARM_RETRY: defineEvent('notifications.alarmRetryTitle', (params) => ({ key: 'notifications.alarmRetryMessage', params: { count: params?.count ?? 0, max: params?.max ?? 0 } })),
+  ALARM_GAVE_UP: defineEvent('notifications.alarmGaveUpTitle', () => ({ key: 'notifications.alarmGaveUp' })),
+  SCHEDULE_CANCELLED: defineEvent('notifications.cancelledTitle', () => ({ key: 'notifications.cancelledMessage' })),
+  OUTSIDE_WINDOW: defineEvent('notifications.outsideWindowTitle', (params, locale) => ({ key: 'notifications.resumeAt', params: { time: formatEventTime(params?.time, locale) } })),
+};
+
+export type NotificationEventKey = keyof typeof NOTIFICATION_EVENTS;
+
+export async function notifyEvent(event: NotificationEventKey, params?: NotificationParams): Promise<void> {
   const settings = await getSettings();
   if (!settings.notificationsEnabled || !chrome.notifications) return;
   const locale = await getStoredLocale();
-  const titleKeys: Record<string, string> = {
-    'X-Pilot: اكتملت الجلسة': 'notifications.sessionCompletedTitle',
-    'X-Pilot: مطلوب تدخل': 'notifications.interventionTitle',
-    'X-Pilot: فشل عنصر': 'notifications.failedItemTitle',
-    'X-Pilot: جلسة مجدولة': 'notifications.scheduledTitle',
-    'X-Pilot: بدأت الجلسة': 'notifications.startedTitle',
-    'X-Pilot: تحدٍ أمني': 'notifications.challenge',
-    'X-Pilot: خارج نافذة النشر': 'notifications.outsideWindow',
-    'X-Pilot: فشل فحص الجاهزية': 'notifications.preflightFailed',
-    'X-Pilot: توقفت Queue مؤقتًا': 'notifications.paused',
-    'X-Pilot: تم إيقاف النشر': 'notifications.dailyLimitTitle',
-    'X-Pilot: أُلغيت الجدولة': 'notifications.cancelledTitle',
-    'X-Pilot: فشل بدء الجدولة': 'notifications.preflightFailed',
-    'X-Pilot: فشل مؤقت': 'notifications.alarmRetryTitle',
-    'X-Pilot: فشل الجدولة': 'notifications.alarmGaveUpTitle',
-  };
-  const messageKeys: Record<string, string> = {
-    'اكتملت جميع عناصر Queue.': 'notifications.sessionCompletedMessage',
-    'تسجيل الدخول إلى X مطلوب.': 'notifications.loginRequired',
-    'تم اكتشاف CAPTCHA أو Challenge وتوقفت الجلسة.': 'notifications.challenge',
-    'تم إيقاف Queue مؤقتًا.': 'notifications.pausedMessage',
-    'وصل حساب X إلى الحد الأقصى للمنشورات اليومية. لم يتم الانتقال إلى العنصر التالي.': 'notifications.dailyLimit',
-    'نتيجة النشر غير مؤكدة. تم إيقاف الجلسة لمنع إعادة النشر.': 'notifications.unverifiedStop',
-    'بدأت جلسة النشر المجدولة.': 'notifications.startedMessage',
-    'لا يوجد عنصر Queue قابل للتشغيل عند موعد الجدولة.': 'notifications.noRunnableItems',
-    'تعذر تنفيذ Alarm بعد محاولات محدودة. راجع الجلسة ثم أعد التشغيل يدويًا.': 'notifications.alarmGaveUp',
-    'تم إلغاء جلسة النشر المجدولة.': 'notifications.cancelledMessage',
-  };
-  // Dynamic notifications embed counts, positions, or timestamps.
-  const dynamicPatterns: Array<{ pattern: RegExp; build: (matches: RegExpMatchArray) => string }> = [
-    { pattern: /^سيستأنف النشر في (.+)$/u, build: (m) => `${translateForLocale(locale, 'notifications.outsideWindow')}: ${formatDateTimeForLocale(m[1], locale)}` },
-    { pattern: /^ستبدأ الجلسة في (.+)$/u, build: (m) => translateForLocale(locale, 'notifications.scheduledFor', { time: formatDateTimeForLocale(m[1], locale) }) },
-    { pattern: /^فشل Item #(\d+): (.+)$/u, build: (m) => translateForLocale(locale, 'notifications.failedItemMessage', { position: m[1], reason: m[2] }) },
-    { pattern: /^فشل Alarm وسيُعاد المحاولة \((\d+)\/(\d+)\)\.$/u, build: (m) => translateForLocale(locale, 'notifications.alarmRetryMessage', { count: m[1], max: m[2] }) },
-  ];
-  const translatedTitle = titleKeys[title] ? translateForLocale(locale, titleKeys[title]) : title;
-  let translatedMessage = messageKeys[message] ? translateForLocale(locale, messageKeys[message]) : message;
-  if (translatedMessage === message) {
-    const dynamic = dynamicPatterns.find(({ pattern }) => pattern.test(message));
-    if (dynamic) translatedMessage = message.replace(dynamic.pattern, (...args) => { const matches = args.slice(0, -2) as unknown as RegExpMatchArray; return dynamic.build(matches); });
-    else if (/^[a-z][a-zA-Z0-9]*(\.[a-zA-Z0-9]+)+$/.test(message)) translatedMessage = translateForLocale(locale, message, messageParams ?? {});
-  }
-  await chrome.notifications.create(`x-pilot-${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon128.png', title: translatedTitle, message: translatedMessage });
+  const spec = NOTIFICATION_EVENTS[event];
+  const { key, params: messageParams } = spec.message(params, locale);
+  await chrome.notifications.create(`x-pilot-${Date.now()}`, { type: 'basic', iconUrl: 'icons/icon128.png', title: translateForLocale(locale, spec.titleKey), message: translateForLocale(locale, key, messageParams ?? {}) });
 }
 
 export async function updateBadge(state?: AppState): Promise<void> {
@@ -286,7 +286,7 @@ async function processCurrentItem(): Promise<void> {
     const waiting = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, status: 'WAITING', nextRunAt: allowedAt, updatedAt: Date.now() } : null }));
     await chrome.alarms.clear(ALARM_NAME);
     await chrome.alarms.create(ALARM_NAME, { when: allowedAt, persistAcrossSessions: true });
-    await notifyEvent('X-Pilot: خارج نافذة النشر', `سيستأنف النشر في ${new Date(allowedAt).toLocaleString()}`);
+    await notifyEvent('OUTSIDE_WINDOW', { time: allowedAt });
     await broadcast(waiting);
     return;
   }
@@ -340,7 +340,7 @@ async function processCurrentItem(): Promise<void> {
       ? await closeAutomationTabIfConfigured(nextState.session)
       : nextState;
     if (nextStatus === 'COMPLETED' && nextState.workspaceId) await releaseAutomationOwner(nextState.workspaceId);
-    if (nextStatus === 'COMPLETED') await notifyEvent('X-Pilot: اكتملت الجلسة', 'اكتملت جميع عناصر Queue.');
+    if (nextStatus === 'COMPLETED') await notifyEvent('SESSION_COMPLETED');
     await broadcast(visibleState);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'UNKNOWN_ERROR';
@@ -356,12 +356,12 @@ async function processCurrentItem(): Promise<void> {
       await syncHistoricalSession(pausedState, 'PAUSED', message);
       await chrome.alarms.clear(ALARM_NAME);
       await restoreActiveTab(previousActiveTabId);
-      await notifyEvent('X-Pilot: تم إيقاف النشر', 'وصل حساب X إلى الحد الأقصى للمنشورات اليومية. لم يتم الانتقال إلى العنصر التالي.');
+      await notifyEvent('DAILY_LIMIT_STOP');
       await broadcast(pausedState);
       return;
     }
-    if (message.includes('LOGIN') || message.includes('PUBLISH_CONTROLS_NOT_READY')) await notifyEvent('X-Pilot: مطلوب تدخل', message.includes('LOGIN') ? 'تسجيل الدخول إلى X مطلوب.' : 'تعذر العثور على عناصر النشر.');
-    if (message.includes('CHALLENGE') || message.includes('CAPTCHA')) await notifyEvent('X-Pilot: تحدٍ أمني', 'تم اكتشاف CAPTCHA أو Challenge وتوقفت الجلسة.');
+    if (message.includes('LOGIN') || message.includes('PUBLISH_CONTROLS_NOT_READY')) await notifyEvent(message.includes('LOGIN') ? 'LOGIN_REQUIRED' : 'CONTROLS_NOT_READY');
+    if (message.includes('CHALLENGE') || message.includes('CAPTCHA')) await notifyEvent('CHALLENGE_STOP');
     if (message === 'AUTOMATION_INTERRUPTED') {
       const interruptedState = await updateRuntimeState((current) => ({
         ...current,
@@ -386,7 +386,7 @@ async function processCurrentItem(): Promise<void> {
       await syncHistoricalSession(uncertain, 'PAUSED', 'PUBLISH_OUTCOME_UNVERIFIED');
       await chrome.alarms.clear(ALARM_NAME);
       await restoreActiveTab(previousActiveTabId);
-      await notifyEvent('X-Pilot: مطلوب تدخل', 'نتيجة النشر غير مؤكدة. تم إيقاف الجلسة لمنع إعادة النشر.');
+      await notifyEvent('UNVERIFIED_RESULT_STOP');
       await broadcast(uncertain);
       return;
     }
@@ -415,7 +415,7 @@ async function processCurrentItem(): Promise<void> {
       ? await closeAutomationTabIfConfigured(failedState.session)
       : failedState;
     if (nextStatus === 'COMPLETED' && failedState.workspaceId) await releaseAutomationOwner(failedState.workspaceId);
-    if (failedStatus === 'FAILED') await notifyEvent('X-Pilot: فشل عنصر', `فشل Item #${item.position}: ${message}`);
+    if (failedStatus === 'FAILED') await notifyEvent('ITEM_FAILED', { position: item.position, reason: message });
     await broadcast(visibleState);
   }
 }
@@ -472,7 +472,7 @@ export async function performPreflight(workspaceId: string) {
 export async function scheduleSession(workspaceId: string, startAt: number): Promise<AppState> {
   if (!Number.isFinite(startAt) || startAt <= Date.now()) throw new Error('SCHEDULE_START_MUST_BE_IN_FUTURE');
   const preflight = await performPreflight(workspaceId);
-  if (!preflight.ready) { await notifyEvent('X-Pilot: فشل فحص الجاهزية', preflight.summaryKey, preflight.summaryParams); throw new Error(`PREFLIGHT_FAILED:${preflight.summaryKey}`); }
+  if (!preflight.ready) { await notifyEvent('PREFLIGHT_FAILED', { ...preflight.summaryParams, summaryKey: preflight.summaryKey }); throw new Error(`PREFLIGHT_FAILED:${preflight.summaryKey}`); }
   await claimAutomationOwner(workspaceId);
   const settings = await getWorkspaceSettings(workspaceId);
   const scheduled = await updateWorkspaceState(workspaceId, (current) => ({
@@ -493,7 +493,7 @@ export async function scheduleSession(workspaceId: string, startAt: number): Pro
   await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
   await chrome.alarms.create(SCHEDULE_ALARM_NAME, { when: startAt, persistAcrossSessions: true });
   const state: AppState = { workspaceId: scheduled.workspaceId, queue: scheduled.queue, session: scheduled.session, history: scheduled.history };
-  await notifyEvent('X-Pilot: جلسة مجدولة', `ستبدأ الجلسة في ${new Date(startAt).toLocaleString()}`);
+  await notifyEvent('SCHEDULED_FOR', { time: startAt });
   await broadcast(state);
   return state;
 }
@@ -509,13 +509,13 @@ async function handleScheduledStart(): Promise<void> {
   if (!item || !canStartItem(item.status)) {
     await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
     const failed = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, status: 'FAILED', scheduledStartAt: undefined, nextRunAt: undefined, updatedAt: Date.now() } : null }));
-    await notifyEvent('X-Pilot: فشل بدء الجدولة', 'لا يوجد عنصر Queue قابل للتشغيل عند موعد الجدولة.');
+    await notifyEvent('SCHEDULE_START_FAILED');
     await broadcast(failed);
     return;
   }
   const running = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, status: 'RUNNING', startedAt: Date.now(), scheduledStartAt: undefined, nextRunAt: undefined, updatedAt: Date.now() } : null }));
   await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
-  await notifyEvent('X-Pilot: بدأت الجلسة', 'بدأت جلسة النشر المجدولة.');
+  await notifyEvent('SCHEDULED_STARTED');
   let ready = running;
   if (running.workspaceId && running.session && !running.session.historicalSessionId) {
     const historical = createHistoricalSession(running.session, running.queue);
@@ -539,14 +539,14 @@ async function handleAlarmFailure(alarmName: string, error: unknown): Promise<vo
     if (decision.action === 'RETRY') {
       await chrome.alarms.create(decision.alarmName, { when: decision.when, persistAcrossSessions: true });
       const retried = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, status: current.session.status === 'RUNNING' ? 'WAITING' : current.session.status, nextRunAt: current.session.status === 'RUNNING' ? decision.when : current.session.nextRunAt, alarmFailureCount: decision.failureCount, lastAlarmError: message, updatedAt: Date.now() } : null }));
-      await notifyEvent('X-Pilot: فشل مؤقت', `فشل Alarm وسيُعاد المحاولة (${decision.failureCount}/3).`);
+      await notifyEvent('ALARM_RETRY', { count: decision.failureCount, max: 3 });
       await broadcast(retried);
       return;
     }
     const failed = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, status: 'FAILED', nextRunAt: undefined, scheduledStartAt: undefined, alarmFailureCount: decision.failureCount, lastAlarmError: message, updatedAt: Date.now() } : null }));
     await chrome.alarms.clear(alarmName);
     if (failed.workspaceId) await releaseAutomationOwner(failed.workspaceId);
-    await notifyEvent('X-Pilot: فشل الجدولة', 'تعذر تنفيذ Alarm بعد محاولات محدودة. راجع الجلسة ثم أعد التشغيل يدويًا.');
+    await notifyEvent('ALARM_GAVE_UP');
     await broadcast(failed);
   } catch (fallbackError) {
     console.error('X-Pilot alarm failure recovery failed', fallbackError);
@@ -578,7 +578,7 @@ export async function startSession(messageWorkspaceId?: string): Promise<unknown
     const existing = await getWorkspaceState(workspaceId);
     if (existing.session && ['RUNNING', 'WAITING', 'PAUSED', 'SCHEDULED'].includes(existing.session.status)) throw new Error('START_ALREADY_ACTIVE');
     const preflight = await performPreflight(workspaceId);
-    if (!preflight.ready) { await notifyEvent('X-Pilot: فشل فحص الجاهزية', preflight.summaryKey, preflight.summaryParams); throw new Error(`PREFLIGHT_FAILED:${preflight.summaryKey}`); }
+    if (!preflight.ready) { await notifyEvent('PREFLIGHT_FAILED', { ...preflight.summaryParams, summaryKey: preflight.summaryKey }); throw new Error(`PREFLIGHT_FAILED:${preflight.summaryKey}`); }
     await claimAutomationOwner(workspaceId);
     const settings = await getWorkspaceSettings(workspaceId);
     const state = await updateRuntimeState((current) => {
@@ -623,7 +623,7 @@ export async function startScheduledNow(): Promise<unknown> {
     const state = await getWorkspaceState(workspaceId);
     if (!state.session || state.session.status !== 'SCHEDULED') throw new Error('START_NOT_SCHEDULED');
     const preflight = await performPreflight(workspaceId);
-    if (!preflight.ready) { await notifyEvent('X-Pilot: فشل فحص الجاهزية', preflight.summaryKey, preflight.summaryParams); throw new Error(`PREFLIGHT_FAILED:${preflight.summaryKey}`); }
+    if (!preflight.ready) { await notifyEvent('PREFLIGHT_FAILED', { ...preflight.summaryParams, summaryKey: preflight.summaryKey }); throw new Error(`PREFLIGHT_FAILED:${preflight.summaryKey}`); }
     await claimAutomationOwner(workspaceId);
     const running = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, status: 'RUNNING', startedAt: Date.now(), scheduledStartAt: undefined, nextRunAt: undefined, updatedAt: Date.now() } : null }));
     await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
@@ -645,7 +645,7 @@ export async function pauseSession(): Promise<AppState> {
     session: state.session ? { ...state.session, status: 'PAUSED', pausedAt: Date.now(), nextRunAt: state.session.status === 'WAITING' ? state.session.nextRunAt : undefined, updatedAt: Date.now() } : null
   }));
   await syncHistoricalSession(paused, 'PAUSED');
-  await notifyEvent('X-Pilot: توقفت Queue مؤقتًا', 'تم إيقاف Queue مؤقتًا.');
+  await notifyEvent('SESSION_PAUSED');
   await broadcast(paused);
   return paused;
 
@@ -709,7 +709,7 @@ export async function cancelScheduledStart(): Promise<AppState> {
   await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
   const cancelled = await updateRuntimeState((current) => ({ ...current, session: current.session?.status === 'SCHEDULED' ? { ...current.session, status: 'STOPPED', scheduledStartAt: undefined, nextRunAt: undefined, updatedAt: Date.now() } : current.session }));
   await releaseAutomationOwner(cancelled.workspaceId ?? (await getMeta()).activeWorkspaceId);
-  await notifyEvent('X-Pilot: أُلغيت الجدولة', 'تم إلغاء جلسة النشر المجدولة.');
+  await notifyEvent('SCHEDULE_CANCELLED');
   await broadcast(cancelled);
   return cancelled;
 

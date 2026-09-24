@@ -5,6 +5,9 @@ const composerSelectors = [
   '[contenteditable="true"][role="textbox"]',
   'div[role="textbox"][contenteditable="true"]',
   '[data-testid="tweetTextarea_0"] [contenteditable="true"]',
+  // Defensive fallback: future composer markup may suffix the testid
+  // (e.g. tweetTextarea_0_rich) — match any tweetTextarea-prefixed editor.
+  'div[data-testid^="tweetTextarea"][contenteditable="true"]',
   'textarea[aria-label*="Post"]',
   'textarea[aria-label*="Tweet"]',
   'textarea[aria-label*="نص المنشور"]',

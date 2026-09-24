@@ -110,10 +110,12 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .workspace-manage-button { flex: 0 0 36px; }
 
 .tabs-bar { position: relative; z-index: 5; display: grid; gap: 8px; min-height: 13px; margin: 0 -4px 7px; }
-.tabs { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; padding: 5px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-2); }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px; border: 1px solid var(--color-border); border-radius: var(--radius-lg); background: var(--color-surface-2); }
+/* 8 tabs flow 5+3: flex-grow lets the second row fill the width evenly in
+   both LTR and RTL instead of leaving two empty grid cells at the end. */
 .nav-group { display: contents; }
 .nav-group > span { display: none; }
-.tab-button { min-width: 0; min-height: 47px; flex-direction: column; gap: 4px; padding: 7px 4px; border: 0; color: var(--color-text-3); background: transparent; font-size: 10px; }
+.tab-button { flex: 1 1 18%; min-width: 0; min-height: 47px; flex-direction: column; gap: 4px; padding: 7px 4px; border: 0; color: var(--color-text-3); background: transparent; font-size: 10px; }
 .tab-button span { overflow: hidden; max-width: 100%; text-overflow: ellipsis; white-space: nowrap; }
 .tab-button.active { color: var(--color-primary); background: var(--color-surface); box-shadow: var(--shadow-sm); }
 .tab-button .icon { opacity: .8; }
@@ -334,7 +336,8 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .history-row small { display: block; margin-top: 3px; color: var(--color-text-3); }
 .history-counts { display: flex; gap: 8px; color: var(--color-text-2); font-size: 11px; white-space: nowrap; }
 .activity-list { display: grid; gap: 14px; }
-.session-summary { padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-2); }
+.session-summary { padding: 14px; border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface-2); transition: border-color var(--transition-fast), box-shadow var(--transition-fast), transform var(--transition-fast); }
+.session-summary:hover { border-color: #aac2df; box-shadow: var(--shadow-sm); transform: translateY(-1px); }
 .session-summary-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .session-summary-header small, .session-summary-meta span { display: block; margin-top: 4px; color: var(--color-text-3); font-size: 11px; }
 .session-summary-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; margin-top: 12px; padding: 10px 0; border-top: 1px solid var(--color-border-subtle); border-bottom: 1px solid var(--color-border-subtle); }
@@ -356,11 +359,46 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .empty-state { display: grid; justify-items: center; gap: 8px; padding: 30px 15px; color: var(--color-text-2); text-align: center; }
 .empty-state p { max-width: 280px; margin: 0; color: var(--color-text-3); font-size: 12px; }
 .empty-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 15px; color: var(--color-primary); background: #e5f0ff; }
+/* Workspace color dot — mirrors the active workspace color from the switcher. */
+.workspace-color-dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; box-shadow: inset 0 0 0 1px #15355a26; }
+.workspace-switcher-copy strong { align-self: center; }
+
+/* Inline clipboard actions (copy link / copy summary). */
+.link-action { border: 0; padding: 2px 4px; color: var(--color-primary); background: transparent; font-size: 11px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.link-action:hover { border: 0; color: var(--color-primary-hover); background: transparent; box-shadow: none; }
+.link-action:focus-visible { box-shadow: var(--shadow-focus); }
+
+/* Analytics success-rate donut. */
+.analytics-donut { display: grid; justify-items: center; align-content: center; gap: 6px; }
+.success-donut { width: 62px; height: 62px; }
+.success-donut .donut-track { fill: none; stroke: var(--color-surface-3); stroke-width: 7; }
+.success-donut .donut-value { fill: none; stroke: var(--color-primary); stroke-width: 7; stroke-linecap: round; transform: rotate(-90deg); transform-origin: 50% 50%; transition: stroke-dashoffset var(--transition-normal); }
+.success-donut text { fill: var(--color-text); font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; }
+
+/* Analytics header: keep the eyebrow and title on one line while the scope
+   select absorbs the squeeze instead of wrapping the heading block. */
+.analytics-panel .section-heading > div { min-width: 0; }
+.analytics-panel .section-heading select { max-width: 240px; flex: 0 1 auto; min-width: 150px; }
+.analytics-panel .section-heading .eyebrow { white-space: nowrap; }
+h2, h3 { text-wrap: balance; }
+
+/* Thin, theme-aware scrollbars for long lists. */
+* { scrollbar-width: thin; scrollbar-color: var(--color-border) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 999px; background: var(--color-border); background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--color-text-3); }
+::-webkit-scrollbar-track { background: transparent; }
+
+@media (prefers-reduced-motion: reduce) {
+  .session-summary, .bank-card, .workspace-card { transition: none; }
+  .session-summary:hover, .bank-card:hover, .workspace-card:hover { transform: none; }
+  .success-donut .donut-value { transition: none; }
+}
+
 footer { margin: 18px 2px 6px; }
 
 @media (max-width: 520px) {
   .shell { padding: 14px 11px 24px; }
-  .tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .tab-button { min-height: 44px; font-size: 9px; }
   .stats { gap: 5px; }
   .stats b, .metric-card strong { font-size: 17px; }

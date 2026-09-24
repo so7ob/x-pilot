@@ -57,3 +57,21 @@ test('reported Queue, session, history, analytics, workspace, and settings label
     }
   }
 });
+
+test('Every t() literal used by the UI exists in both dictionaries', () => {
+  const arabic = flatten(ar);
+  const english = flatten(en);
+  const uiRoot = new URL('../src/ui/', import.meta.url).pathname;
+  const sources = fs.readdirSync(uiRoot, { recursive: true })
+    .filter((file) => /\.(tsx|ts)$/.test(file))
+    .map((file) => fs.readFileSync(uiRoot + file, 'utf8'))
+    .join('\n');
+  // Skip dynamic-prefix captures such as t('statuses.' + status) — the enum-driven
+  // families are covered by the parity and state tests.
+  const used = new Set([...sources.matchAll(/\bt\('([a-zA-Z0-9_.]+)'/g)].map((m) => m[1]).filter((key) => !key.endsWith('.')));
+  assert.ok(used.size >= 150, `expected a broad sweep of UI keys, found ${used.size}`);
+  for (const key of used) {
+    assert.ok(arabic.has(key), `UI uses t('${key}') but ar.ts does not define it`);
+    assert.ok(english.has(key), `UI uses t('${key}') but en.ts does not define it`);
+  }
+});
