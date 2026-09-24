@@ -118,6 +118,30 @@ test('Service Worker exposes live engine and automation-tab connectivity status'
   assert.match(engineSource, /await chrome\.tabs\.get\(session\.automationTabId\)/);
 });
 
+test('X adapter keeps DOM coupling isolated and covered by drift-guard fixtures', () => {
+  // jsdom is a test-only dependency: it must never ship in the extension bundle.
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.ok(pkg.devDependencies?.jsdom, 'jsdom must stay a devDependency for DOM fixtures');
+  assert.equal(pkg.dependencies?.jsdom, undefined, 'jsdom must never become a runtime dependency');
+  // The adapter is the only DOM-coupled publish component and must stay free of extension APIs.
+  assert.doesNotMatch(contentAdapter, /from\s+'chrome/, 'adapter must not import chrome APIs');
+  assert.doesNotMatch(contentAdapter, /chrome\.(storage|alarms|runtime|notifications)/, 'adapter must stay a pure DOM module');
+  // The DOM fixture suite must keep covering every selector family the adapter depends on.
+  const domFixtures = fs.readFileSync(path.join(root, 'tests/x-provider-dom.test.mjs'), 'utf8');
+  assert.match(domFixtures, /tweetTextarea_0/, 'fixtures must cover the modern composer testid');
+  assert.match(domFixtures, /contenteditable/, 'fixtures must cover the contenteditable composer');
+  assert.match(domFixtures, /textarea aria-label/, 'fixtures must cover the legacy textarea composer');
+  assert.match(domFixtures, /tweetButtonInline/, 'fixtures must cover the inline publish button testid');
+  assert.match(domFixtures, /aria-label="نشر"/, 'fixtures must cover the Arabic publish button');
+  assert.match(domFixtures, /NOT_LOGGED_IN/, 'fixtures must cover login classification');
+  assert.match(domFixtures, /CAPTCHA_OR_SECURITY_CHALLENGE/, 'fixtures must cover challenge classification');
+  assert.match(domFixtures, /X_DAILY_POST_LIMIT_REACHED/, 'fixtures must cover daily-limit classification');
+  assert.match(domFixtures, /WRONG_HOST/, 'fixtures must cover host gating');
+  assert.match(domFixtures, /getPublishedPostUrl/, 'fixtures must cover published-post URL extraction');
+  // The adapter's defensive fallback must stay in place for future markup variants.
+  assert.match(contentAdapter, /data-testid\^="tweetTextarea"/, 'composer prefix fallback selector must be kept');
+});
+
 test('Dry Run exposes both modes and does not use the publish action', () => {
   assert.match(models, /DryRunItemStatus/);
   assert.match(models, /DRY_RUN_FIRST/);
