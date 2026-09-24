@@ -10,8 +10,11 @@ import {
   loadFilterPresets,
   saveFilterPreset,
   deleteFilterPreset,
+  renameFilterPreset,
+  moveFilterPreset,
   presetsForView,
   hasFilterSelection,
+  filtersEqual,
   normalizePresetName,
   sanitizePresetStore,
   MAX_FILTER_PRESETS_PER_VIEW,
@@ -205,4 +208,122 @@ test('presets live under a dedicated key and never touch saved-filters state', a
   assert.ok(store.has(KEY), 'presets use their own key');
   const savedRaw = store.get(SAVED_FILTERS_KEY);
   assert.equal(savedRaw.sessions.query, 'remembered', 'saved-filters state is untouched');
+});
+
+test('rename updates only the name and persists it', async () => {
+  installMockStorage();
+  store.clear();
+  const saved = await saveFilterPreset('sessions', 'old name', filtersWith({ query: 'launch', status: 'FAILED' }));
+  assert.ok(saved.ok);
+  const renamed = await renameFilterPreset('sessions', saved.preset.id, '  new   name ');
+  assert.equal(renamed.ok, true);
+  assert.equal(renamed.preset.name, 'new name');
+  assert.equal(renamed.preset.id, saved.preset.id, 'identity survives the rename');
+  assert.equal(renamed.preset.filters.query, 'launch', 'filters survive the rename');
+  assert.equal(renamed.preset.createdAt, saved.preset.createdAt, 'createdAt survives the rename');
+  const loaded = presetsForView(await loadFilterPresets(), 'sessions');
+  assert.equal(loaded.length, 1);
+  assert.equal(loaded[0].name, 'new name');
+});
+
+test('rename rejects empty and over-long names', async () => {
+  installMockStorage();
+  store.clear();
+  const saved = await saveFilterPreset('banks', 'keeper', filtersWith({ query: 'x' }));
+  const empty = await renameFilterPreset('banks', saved.preset.id, '   ');
+  assert.equal(empty.ok, false);
+  assert.equal(empty.reason, 'empty-name');
+  const tooLong = await renameFilterPreset('banks', saved.preset.id, 'x'.repeat(MAX_FILTER_PRESET_NAME_LENGTH + 1));
+  assert.equal(tooLong.ok, false);
+  assert.equal(tooLong.reason, 'name-too-long');
+  const loaded = presetsForView(await loadFilterPresets(), 'banks');
+  assert.equal(loaded[0].name, 'keeper', 'failed renames leave the preset untouched');
+});
+
+test('rename of an unknown id reports not-found', async () => {
+  installMockStorage();
+  store.clear();
+  const outcome = await renameFilterPreset('queue', 'missing-id', 'whatever');
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.reason, 'not-found');
+});
+
+test('rename under failing storage surfaces storage-failure', async () => {
+  installMockStorage();
+  store.clear();
+  const saved = await saveFilterPreset('banks', 'target', filtersWith({ query: 'x' }));
+  assert.ok(saved.ok);
+  globalThis.chrome = { storage: { local: { get: async (key) => (store.has(key) ? { [key]: store.get(key) } : {}), set: async () => { throw new Error('storage unavailable'); } } } };
+  const outcome = await renameFilterPreset('banks', saved.preset.id, 'new name');
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.reason, 'storage-failure');
+  await assert.doesNotReject(() => renameFilterPreset('banks', saved.preset.id, 'new name'));
+});
+
+test('move up/down swaps neighbors and persists the order', async () => {
+  installMockStorage();
+  store.clear();
+  const a = await saveFilterPreset('history', 'A', filtersWith({ query: 'a' }));
+  const b = await saveFilterPreset('history', 'B', filtersWith({ query: 'b' }));
+  const c = await saveFilterPreset('history', 'C', filtersWith({ query: 'c' }));
+  assert.ok(a.ok && b.ok && c.ok);
+  const movedUp = await moveFilterPreset('history', c.preset.id, 'up');
+  assert.equal(movedUp.ok, true);
+  assert.deepEqual(movedUp.presets.map((p) => p.name), ['A', 'C', 'B']);
+  const movedDown = await moveFilterPreset('history', a.preset.id, 'down');
+  assert.equal(movedDown.ok, true);
+  assert.deepEqual(movedDown.presets.map((p) => p.name), ['C', 'A', 'B']);
+  const persisted = presetsForView(await loadFilterPresets(), 'history');
+  assert.deepEqual(persisted.map((p) => p.name), ['C', 'A', 'B'], 'order is persisted');
+});
+
+test('move past either end is a no-op success; unknown id is not-found', async () => {
+  installMockStorage();
+  store.clear();
+  const a = await saveFilterPreset('queue', 'A', filtersWith({ query: 'a' }));
+  await saveFilterPreset('queue', 'B', filtersWith({ query: 'b' }));
+  const up = await moveFilterPreset('queue', a.preset.id, 'up');
+  assert.equal(up.ok, true);
+  assert.deepEqual(up.presets.map((p) => p.name), ['A', 'B'], 'boundary move keeps the order');
+  const missing = await moveFilterPreset('queue', 'ghost', 'down');
+  assert.equal(missing.ok, false);
+  assert.equal(missing.reason, 'not-found');
+});
+
+test('move under failing storage surfaces storage-failure', async () => {
+  installMockStorage();
+  store.clear();
+  store.set(KEY, { banks: [{ id: 'p1', name: 'A', view: 'banks', filters: filtersWith({ query: 'a' }), createdAt: 1 }, { id: 'p2', name: 'B', view: 'banks', filters: filtersWith({ query: 'b' }), createdAt: 2 }] });
+  globalThis.chrome = { storage: { local: { get: async (key) => (store.has(key) ? { [key]: store.get(key) } : {}), set: async () => { throw new Error('storage unavailable'); } } } };
+  const outcome = await moveFilterPreset('banks', 'p2', 'up');
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.reason, 'storage-failure');
+});
+
+test('concurrent rename + move + save on the same view never clobber each other', async () => {
+  installMockStorage();
+  store.clear();
+  const first = await saveFilterPreset('banks', 'first', filtersWith({ query: '1' }));
+  const [renamed, moved, saved] = await Promise.all([
+    renameFilterPreset('banks', first.preset.id, 'renamed'),
+    saveFilterPreset('banks', 'second', filtersWith({ query: '2' })).then(() => moveFilterPreset('banks', first.preset.id, 'up')),
+    saveFilterPreset('banks', 'third', filtersWith({ query: '3' })),
+  ]);
+  assert.equal(renamed.ok, true);
+  assert.equal(moved.ok, true);
+  assert.equal(saved.ok, true);
+  const final = presetsForView(await loadFilterPresets(), 'banks');
+  assert.equal(final.length, 3, 'all three presets survive the race');
+  assert.ok(final.some((p) => p.name === 'renamed'), 'the rename survives the race');
+});
+
+test('filtersEqual compares every filter field including workspace scope', () => {
+  const base = filtersWith({ query: 'x', workspaceId: 'ws-1' });
+  assert.equal(filtersEqual(base, { ...base }), true);
+  assert.equal(filtersEqual(base, { ...base, workspaceId: 'ws-2' }), false);
+  assert.equal(filtersEqual(base, { ...base, status: 'PUBLISHED' }), false);
+  assert.equal(filtersEqual(base, { ...base, dateFrom: '2026-01-01' }), false);
+  assert.equal(filtersEqual(base, { ...base, bankId: 'b1' }), false);
+  assert.equal(filtersEqual(emptySearchFilters, { ...emptySearchFilters }), true);
+  assert.equal(filtersEqual(filtersWith({ query: 'a' }), filtersWith({ query: 'b' })), false);
 });
