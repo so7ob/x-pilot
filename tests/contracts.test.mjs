@@ -98,6 +98,35 @@ test('Unified activity records preserve source and published post links', () => 
   assert.match(uiSource, /sessions\.sourceLink/);
 });
 
+test('v1.13 publish attempts capture the full tweet snapshot analytically', () => {
+  // Model: analytical snapshot fields are optional (backward compatible).
+  assert.match(models, /tweetLabel\?: string/);
+  assert.match(models, /bankId\?: string/);
+  assert.match(models, /bankName\?: string/);
+  assert.match(models, /itemPosition\?: number/);
+  assert.match(models, /durationMs\?: number/);
+  assert.match(models, /adapter\?: string/);
+  // Engine: the pure builder is the ONLY way history entries are written.
+  assert.match(engineSource, /export function buildAttemptEntry/);
+  assert.match(engineSource, /tweetLabel: rawLabel \? rawLabel\.slice\(0, ATTEMPT_TWEET_LABEL_MAX\) : undefined/);
+  assert.match(engineSource, /adapter: 'x'/);
+  const entryCalls = engineSource.match(/history: \[\.\.\.(\w+)\.history, buildAttemptEntry\(/g) ?? [];
+  assert.equal(entryCalls.length, 4, 'all four history write sites must use buildAttemptEntry');
+  assert.equal(engineSource.match(/history: \[\.\.\.(\w+)\.history, \{ id: crypto\.randomUUID\(\)/g)?.length ?? 0, 0, 'no raw history entry literals may remain');
+  assert.ok(engineSource.includes('loadWorkspaceBanks'), 'bank names resolved for analytical snapshots');
+  // UI: analytical digest + tweet content + prominent published link.
+  assert.match(uiSource, /buildSessionAnalytics/);
+  assert.match(uiSource, /attempt-tweet/);
+  assert.match(uiSource, /resolveAttemptTweet/);
+  assert.match(uiSource, /sessions\.successRate/);
+  assert.match(uiSource, /sessions\.withLink/);
+  assert.match(uiSource, /sessions\.noTweetInfo/);
+  assert.match(uiSource, /history\.copyLink/);
+  assert.match(styles, /\.session-analytics/);
+  assert.match(styles, /\.attempt-tweet/);
+  assert.match(styles, /\.attempt-badge\[data-result='PUBLISHED'\]/);
+});
+
 test('operation tab includes current-tweet information and existing controls', () => {
   assert.match(uiSource, /export function CurrentTweetCard/);
   assert.match(uiSource, /CurrentTweetCard/);
