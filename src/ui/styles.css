@@ -121,7 +121,7 @@ button.danger:hover, .ui-button-danger:hover { border-color: #df9c99; }
 .shell-operation .tabs-bar { min-height: 11px; }
 .shell-operation .tabs-bar .tabs { position: absolute; top: -5px; right: 0; left: 0; opacity: 0; transform: translateY(-7px); pointer-events: none; transition: opacity var(--transition-fast), transform var(--transition-fast); }
 .shell-operation .tabs-bar:hover .tabs, .shell-operation .tabs-bar:focus-within .tabs { opacity: 1; transform: translateY(0); pointer-events: auto; }
-.shell-operation .tabs-bar::after { position: absolute; top: 0; right: 50%; padding: 0 8px; color: var(--color-text-3); background: var(--color-bg); content: 'مرر لإظهار التبويبات'; font-size: 9px; font-weight: 800; opacity: .8; transform: translateX(50%); transition: opacity var(--transition-fast); pointer-events: none; }
+.shell-operation .tabs-bar::after { position: absolute; top: 0; right: 50%; padding: 0 8px; color: var(--color-text-3); background: var(--color-bg); content: attr(data-scroll-hint); font-size: 9px; font-weight: 800; opacity: .8; transform: translateX(50%); transition: opacity var(--transition-fast); pointer-events: none; }
 .shell-operation .tabs-bar:hover::after, .shell-operation .tabs-bar:focus-within::after { opacity: 0; }
 .runtime-indicators { display: flex; flex-wrap: wrap; gap: 7px; }
 .live-indicator { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid var(--color-border); border-radius: 999px; color: var(--color-text-2); background: var(--color-surface); font-size: 10px; font-weight: 800; }

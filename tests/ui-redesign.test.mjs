@@ -73,7 +73,7 @@ test('operation dashboard owns the scheduled and waiting timer display', () => {
 
 test('all tabs share the same header and the Workspace switcher stays compact', () => {
   assert.match(ui, /<header className="app-header">/);
-  assert.match(ui, /className="workspace-switcher premium-switcher"><div className="workspace-switcher-copy"><span className="eyebrow">\{t\('ui\.workspaceActive'\)\}<\/span><strong>/);
+  assert.match(ui, /className="workspace-switcher premium-switcher"><div className="workspace-switcher-copy"><span className="eyebrow">\{t\('ui\.workspaceActive'\)\}<\/span><strong dir="auto">/);
   assert.match(ui, /workspace-manage-button/);
   assert.doesNotMatch(ui, /className="workspace-avatar"/);
   assert.doesNotMatch(ui, /عنصر متبقٍ/);
