@@ -139,7 +139,8 @@ test('v1.13.1 session log linkage: record id = session id, sync lands, v4 round-
   // Engine: repair wiring in recovery for pre-1.13.1 data.
   assert.match(engineSource, /import \{ buildStartOverQueue, countStartOverResets, hasFutureRecoveryAlarm, normalizeRecovery, repairSessionHistoryLinks \} from '\.\.\/domain\/recovery';/);
   assert.match(engineSource, /export async function repairHistoricalSessionLinks/);
-  assert.match(engineSource, /const repairedSessionIds = await repairHistoricalSessionLinks\(\);/);
+  assert.match(engineSource, /await repairHistoricalSessionLinks\(\);/);
+  assert.match(engineSource, /if \(state\.session\) \{\s*state = await ensureHistoricalSession\(state\);\s*await syncHistoricalSession\(state\);\s*\}/, 'recovery must unconditionally ensure + sync the live session record');
   // Recovery: conservative pure repair — re-link by renaming, never delete.
   const recovery = fs.readFileSync(path.join(root, 'src/domain/recovery.ts'), 'utf8');
   assert.match(recovery, /export function repairSessionHistoryLinks/);

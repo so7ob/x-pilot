@@ -250,10 +250,14 @@ export async function recoverPersistedState(): Promise<AppState> {
   // Re-link historical records whose id diverged from the runtime session id
   // (pre-1.13.1 data: attempts existed but matched no record). Runs across all
   // workspaces; only writes when a repair actually re-linked something.
-  const repairedSessionIds = await repairHistoricalSessionLinks();
-  if (repairedSessionIds.length) {
-    state = await getState();
-    if (state.session) state = await ensureHistoricalSession(state);
+  await repairHistoricalSessionLinks();
+  // Then guarantee the live session has its analytical record (a pre-1.13.1
+  // scheduled start never created one — the always-false guard skipped it)
+  // and refresh its counters/status from the recovered queue. Both operations
+  // are idempotent.
+  state = await getState();
+  if (state.session) {
+    state = await ensureHistoricalSession(state);
     await syncHistoricalSession(state);
   }
   await chrome.alarms.clear(ALARM_NAME);
