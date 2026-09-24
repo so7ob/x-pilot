@@ -1,13 +1,13 @@
 import type { AppState, AutomationSession, ContentInspection, LegacyPublishAttempt, QueueItem, RuntimeStatus } from '../domain/models';
 import { createHistoricalSession } from '../domain/models';
-import { buildStartOverQueue, countStartOverResets, hasFutureRecoveryAlarm, normalizeRecovery } from '../domain/recovery';
+import { buildStartOverQueue, countStartOverResets, hasFutureRecoveryAlarm, normalizeRecovery, repairSessionHistoryLinks } from '../domain/recovery';
 import { canStartItem, getNextPendingItem, getNextRunnableItem } from '../domain/state-machine';
 import { runPreflight } from '../domain/preflight';
 import { getNextAllowedPublishingTime } from '../domain/scheduling';
 import { decideAlarmFailure } from '../domain/alarm-recovery';
 import { shouldNeverRepublish } from '../domain/data-integrity.ts';
 import { getStoredLocale, formatDateTimeForLocale, translateForLocale } from '../i18n/translate.ts';
-import { acquireStartLock, claimAutomationOwner, getAutomationOwner, getMeta, getSettings, getState as getActiveState, getWorkspaceSettings, getWorkspaceState, listWorkspaces, releaseAutomationOwner, releaseStartLock, renewStartLock, saveHistoricalSession, updateHistoricalSession, updateState as updateActiveState, updateWorkspaceState } from '../storage/storage-repository';
+import { acquireStartLock, claimAutomationOwner, getAutomationOwner, getHistoricalSessions, getMeta, getSettings, getState as getActiveState, getWorkspaceSettings, getWorkspaceState, listWorkspaces, releaseAutomationOwner, releaseStartLock, renewStartLock, saveHistoricalSession, updateHistoricalSession, updateState as updateActiveState, updateWorkspaceState } from '../storage/storage-repository';
 
 /**
  * X-Pilot automation engine.
@@ -216,11 +216,46 @@ export async function updateBadge(state?: AppState): Promise<void> {
   await chrome.action.setBadgeBackgroundColor({ color: snapshot.session?.status === 'FAILED' ? '#b42318' : '#175fbe' });
 }
 
+/**
+ * Re-links historical session records across ALL workspaces for data written
+ * before the record/session id alignment fix. Pure decision logic lives in
+ * repairSessionHistoryLinks (domain/recovery.ts); this wrapper only performs
+ * the storage round-trips and writes back when something was repaired.
+ *
+ * @returns the ids of records that were re-linked.
+ */
+export async function repairHistoricalSessionLinks(): Promise<string[]> {
+  const meta = await getMeta();
+  const repaired: string[] = [];
+  for (const workspaceId of meta.workspaceOrder) {
+    try {
+      const state = await getWorkspaceState(workspaceId);
+      const result = repairSessionHistoryLinks({ sessions: state.historicalSessions ?? [], history: state.history, activeSessionId: state.session?.id });
+      if (!result.repairedSessionIds.length) continue;
+      await updateWorkspaceState(workspaceId, (current) => ({ ...current, historicalSessions: result.sessions as typeof current.historicalSessions }));
+      repaired.push(...result.repairedSessionIds);
+    } catch {
+      // A workspace that fails to read/repair must not block the others;
+      // the repair is idempotent and retried on the next background start.
+    }
+  }
+  return repaired;
+}
+
 export async function recoverPersistedState(): Promise<AppState> {
   const current = await getState();
   const recovered = normalizeRecovery(current);
   const changed = JSON.stringify(recovered) !== JSON.stringify(current);
-  const state = changed ? await updateRuntimeState(() => recovered) : current;
+  let state = changed ? await updateRuntimeState(() => recovered) : current;
+  // Re-link historical records whose id diverged from the runtime session id
+  // (pre-1.13.1 data: attempts existed but matched no record). Runs across all
+  // workspaces; only writes when a repair actually re-linked something.
+  const repairedSessionIds = await repairHistoricalSessionLinks();
+  if (repairedSessionIds.length) {
+    state = await getState();
+    if (state.session) state = await ensureHistoricalSession(state);
+    await syncHistoricalSession(state);
+  }
   await chrome.alarms.clear(ALARM_NAME);
   await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
   if (state.session?.status === 'SCHEDULED' && state.session.scheduledStartAt && state.session.scheduledStartAt > Date.now()) await chrome.alarms.create(SCHEDULE_ALARM_NAME, { when: state.session.scheduledStartAt, persistAcrossSessions: true });
@@ -242,6 +277,25 @@ export async function syncHistoricalSession(state: AppState, status?: 'RUNNING' 
     failedCount: state.queue.filter((item) => item.status === 'FAILED').length,
     skippedCount: state.queue.filter((item) => item.status === 'SKIPPED').length,
   });
+}
+
+/**
+ * Idempotently guarantees the running session has an analytical record.
+ *
+ * The record id equals the runtime session id (see createHistoricalSession),
+ * so presence is checked BY ID — never by `historicalSessionId` truthiness:
+ * after any storage round-trip sessionFromRuntime fabricates
+ * `historicalSessionId = runtime.sessionId`, which made the previous guard
+ * always-false and silently skipped record creation on scheduled starts and
+ * post-restart resumes.
+ */
+export async function ensureHistoricalSession(state: AppState): Promise<AppState> {
+  if (!state.workspaceId || !state.session) return state;
+  const existing = await getHistoricalSessions(state.workspaceId);
+  if (existing.some((record) => record.id === state.session!.id)) return state;
+  const historical = createHistoricalSession(state.session, state.queue);
+  await saveHistoricalSession(state.workspaceId, historical);
+  return updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, historicalSessionId: historical.id, updatedAt: Date.now() } : null }));
 }
 
 export async function getOrCreateAutomationTab(session: AutomationSession): Promise<number> {
@@ -581,10 +635,8 @@ async function handleScheduledStart(): Promise<void> {
   await chrome.alarms.clear(SCHEDULE_ALARM_NAME);
   await notifyEvent('SCHEDULED_STARTED');
   let ready = running;
-  if (running.workspaceId && running.session && !running.session.historicalSessionId) {
-    const historical = createHistoricalSession(running.session, running.queue);
-    await saveHistoricalSession(running.workspaceId, historical);
-    ready = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, historicalSessionId: historical.id, updatedAt: Date.now() } : null }));
+  if (running.workspaceId && running.session) {
+    ready = await ensureHistoricalSession(running);
   }
   await broadcast(ready);
   await processCurrentItem();
@@ -656,10 +708,8 @@ export async function startSession(messageWorkspaceId?: string): Promise<unknown
       };
       return { ...current, session: { ...session, ...settings, workspaceId, status: 'RUNNING', startedAt: session.startedAt ?? Date.now(), currentItemId: currentItem, currentIndex: current.queue.find((item) => item.id === currentItem)?.position ?? session.currentIndex, total: current.queue.length, updatedAt: Date.now() } };
     });
-    if (state.workspaceId && state.session && !state.session.historicalSessionId) {
-      const historical = createHistoricalSession(state.session, state.queue);
-      await saveHistoricalSession(state.workspaceId, historical);
-      const linked = await updateRuntimeState((current) => ({ ...current, session: current.session ? { ...current.session, historicalSessionId: historical.id, updatedAt: Date.now() } : null }));
+    if (state.workspaceId && state.session) {
+      const linked = await ensureHistoricalSession(state);
       await broadcast(linked); await processCurrentItem(); return getState();
     }
     await broadcast(state); await processCurrentItem(); return getState();

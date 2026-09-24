@@ -91,7 +91,17 @@ export function queueCounters(queue: QueueItem[]) {
     skippedCount: queue.filter((item) => item.status === 'SKIPPED').length,
   };
 }
-export function createHistoricalSession(session: AutomationSession, queue: QueueItem[], id = crypto.randomUUID()): HistoricalSession {
+/**
+ * Builds the analytical session record for a run.
+ *
+ * The record id DEFAULTS to the runtime session id: every publish-attempt
+ * entry is keyed `sessionId = session.id`, and `sessionFromRuntime` restores
+ * `historicalSessionId = runtime.sessionId` after every storage round-trip.
+ * A fresh random id here would orphan every attempt (rows keyed by a session
+ * id that matches no record) and make `syncHistoricalSession` silently no-op.
+ * An explicit id parameter is still accepted for tests and repair tooling.
+ */
+export function createHistoricalSession(session: AutomationSession, queue: QueueItem[], id = session.id): HistoricalSession {
   const now = Date.now();
   return {
     id, workspaceId: session.workspaceId ?? '', startedAt: session.startedAt ?? now, status: historicalStatus(session.status) ?? 'RUNNING',
