@@ -1,4 +1,4 @@
-import type { AppState, AutomationSession, QueueItem } from './models';
+import type { AppState, AutomationSession, HistoricalSession, PublishAttempt, QueueItem } from './models';
 
 const interruptedStatuses = new Set(['OPENING', 'READY', 'PUBLISHING']);
 const terminalStatuses = new Set(['PUBLISHED', 'PUBLISHED_UNVERIFIED', 'SKIPPED']);
@@ -136,4 +136,99 @@ export function buildStartOverQueue(queue: QueueItem[], now = Date.now()): Queue
 
 export function countStartOverResets(queue: QueueItem[]): number {
   return queue.filter((item) => resettableStatuses.has(item.status)).length;
+}
+
+/**
+ * Repairs historical-session linkage for data written by versions where the
+ * analytical record id diverged from the runtime session id.
+ *
+ * Background: attempt entries are keyed `sessionId = runtime session id`,
+ * while the historical record used to receive a fresh UUID — and
+ * `sessionFromRuntime` fabricates `historicalSessionId = runtime.sessionId`
+ * after every storage round-trip. Result: every attempt row was orphaned
+ * (no record shared its sessionId) and every record was empty while its
+ * attempts existed right beside it. The data was never lost — only the link.
+ *
+ * Repair strategy (pure, conservative, idempotent — never deletes anything):
+ * 1. Active-session rule — the LIVE session id is authoritative. If exactly
+ *    one zero-attempt record sits in an active-ish status (RUNNING/WAITING/
+ *    PAUSED), it is the shell created at start: re-link it by renaming it to
+ *    the live session id.
+ * 2. Window rule — an orphaned attempt group belongs to the unique
+ *    zero-attempt terminal record whose [startedAt, completedAt] window
+ *    contains the group's [first, last] attempt timestamps.
+ * Ambiguous pairings (zero or multiple candidates) are left untouched —
+ * honesty over guesswork. Record ids are renamed instead of mutating attempts
+ * because nothing else references a record id, while attempt ids are pinned
+ * in exports and the UI.
+ */
+export interface SessionHistoryRepairInput {
+  sessions: Array<Pick<HistoricalSession, 'id' | 'status' | 'startedAt'> & Partial<Pick<HistoricalSession, 'completedAt'>>>;
+  history: Array<Pick<PublishAttempt, 'sessionId' | 'timestamp'>>;
+  activeSessionId?: string;
+}
+
+export interface SessionHistoryRepairResult {
+  sessions: SessionHistoryRepairInput['sessions'];
+  /** Record ids that were re-linked (renamed) to their attempt session ids. */
+  repairedSessionIds: string[];
+}
+
+const ACTIVE_RECORD_STATUSES = new Set(['RUNNING', 'WAITING', 'PAUSED']);
+
+export function repairSessionHistoryLinks(input: SessionHistoryRepairInput): SessionHistoryRepairResult {
+  const sessions = input.sessions.map((session) => ({ ...session }));
+  const repairedSessionIds: string[] = [];
+  const recordIds = new Set(sessions.map((session) => session.id));
+
+  // Attempts backing each record id (a record with backing data is healthy).
+  const backingCount = new Map<string, number>();
+  for (const attempt of input.history) {
+    if (!attempt.sessionId) continue;
+    backingCount.set(attempt.sessionId, (backingCount.get(attempt.sessionId) ?? 0) + 1);
+  }
+
+  // Group orphaned attempts: sessionId matches no record id.
+  const orphanedGroups = new Map<string, number[]>();
+  for (const attempt of input.history) {
+    if (!attempt.sessionId || recordIds.has(attempt.sessionId)) continue;
+    const timestamps = orphanedGroups.get(attempt.sessionId) ?? [];
+    if (Number.isFinite(attempt.timestamp)) timestamps.push(attempt.timestamp);
+    orphanedGroups.set(attempt.sessionId, timestamps);
+  }
+
+  // Rule 1 — adopt the active session's shell record.
+  if (input.activeSessionId && orphanedGroups.has(input.activeSessionId) && !recordIds.has(input.activeSessionId)) {
+    const shells = sessions.filter((session) => ACTIVE_RECORD_STATUSES.has(session.status) && !(backingCount.get(session.id) ?? 0));
+    if (shells.length === 1) {
+      const shell = shells[0];
+      const renamed = sessions.map((session) => session === shell ? { ...session, id: input.activeSessionId! } : session);
+      sessions.length = 0;
+      sessions.push(...renamed);
+      recordIds.delete(shell.id);
+      recordIds.add(input.activeSessionId);
+      orphanedGroups.delete(input.activeSessionId);
+      repairedSessionIds.push(input.activeSessionId);
+    }
+  }
+
+  // Rule 2 — pair orphaned groups to unique terminal zero-attempt records by time window.
+  const availableShells = new Set(sessions.filter((session) => !ACTIVE_RECORD_STATUSES.has(session.status) && !(backingCount.get(session.id) ?? 0)).map((session) => session.id));
+  for (const [sessionId, timestamps] of orphanedGroups) {
+    if (!timestamps.length || recordIds.has(sessionId)) continue;
+    const first = Math.min(...timestamps);
+    const last = Math.max(...timestamps);
+    const candidates = [...availableShells].map((id) => sessions.find((session) => session.id === id)!).filter((session) =>
+      session.startedAt <= first && typeof session.completedAt === 'number' && last <= session.completedAt);
+    if (candidates.length !== 1) continue;
+    const shell = candidates[0];
+    const renamed = sessions.map((session) => session === shell ? { ...session, id: sessionId } : session);
+    sessions.length = 0;
+    sessions.push(...renamed);
+    availableShells.delete(shell.id);
+    recordIds.add(sessionId);
+    repairedSessionIds.push(sessionId);
+  }
+
+  return { sessions, repairedSessionIds };
 }

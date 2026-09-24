@@ -47,9 +47,24 @@ function sessionFromRuntime(runtime: AutomationSessionRuntime | null, settings: 
   return { id: runtime.sessionId, workspaceId: runtime.workspaceId, bankId: runtime.bankId, bankUrl: runtime.bankUrl ?? '', status: runtime.status, currentItemId: runtime.currentItemId, currentIndex: runtime.currentIndex, total: runtime.total, startedAt: runtime.startedAt, scheduledStartAt: runtime.scheduledStartAt, pausedAt: runtime.pausedAt, completedAt: runtime.completedAt, nextRunAt: runtime.nextRunAt, automationTabId: runtime.automationTabId, alarmFailureCount: runtime.alarmFailureCount, lastAlarmError: runtime.lastAlarmError, intervalMinutes: settings.intervalMinutes, maxRetries: settings.maxRetries, failureBehavior: settings.failureBehavior, confirmBeforeStart: settings.confirmBeforeStart, keepAutomationTabOpen: settings.keepAutomationTabOpen, closeTabOnComplete: settings.closeTabOnComplete, version: runtime.version, updatedAt: runtime.updatedAt, historicalSessionId: runtime.sessionId };
 }
 
+/**
+ * Attempt results that may be persisted verbatim. PAUSED is a legitimate
+ * analytical outcome (e.g. daily-limit stop) — coercing it to FAILED erased
+ * the distinction in the session log.
+ */
+const PERSISTABLE_ATTEMPT_RESULTS = ['PUBLISHED', 'PUBLISHED_UNVERIFIED', 'PENDING', 'FAILED', 'SKIPPED', 'PAUSED'];
+
 function toV4Attempt(attempt: LegacyPublishAttempt, workspaceId: string): PublishAttempt {
-  const result = ['PUBLISHED', 'PUBLISHED_UNVERIFIED', 'PENDING', 'FAILED', 'SKIPPED'].includes(attempt.result) ? attempt.result as PublishAttempt['result'] : 'FAILED';
-  return { id: attempt.id, workspaceId, sessionId: attempt.sessionId ?? '', queueItemId: attempt.queueItemId, targetUrl: attempt.link, link: attempt.link, timestamp: attempt.timestamp, attemptNumber: attempt.attemptNumber, action: 'PUBLISH', result, error: attempt.error, errorMessage: attempt.error };
+  const result = PERSISTABLE_ATTEMPT_RESULTS.includes(attempt.result) ? attempt.result as PublishAttempt['result'] : 'FAILED';
+  return { id: attempt.id, workspaceId, sessionId: attempt.sessionId ?? '', queueItemId: attempt.queueItemId, targetUrl: attempt.link, link: attempt.link, sourceUrl: attempt.sourceUrl, publishedPostUrl: attempt.publishedPostUrl, timestamp: attempt.timestamp, attemptNumber: attempt.attemptNumber, action: attempt.action, result, error: attempt.error, errorMessage: attempt.error, tweetLabel: attempt.tweetLabel, bankId: attempt.bankId, bankName: attempt.bankName, itemPosition: attempt.itemPosition, durationMs: attempt.durationMs, adapter: attempt.adapter };
+}
+
+/** Exposed for tests: v4 persistence shape of an analytical attempt. */
+export { toV4Attempt };
+
+/** Restores the analytical LegacyPublishAttempt shape from persisted v4 storage. */
+export function fromV4Attempt(attempt: PublishAttempt, workspaceId: string): LegacyPublishAttempt {
+  return { id: attempt.id, workspaceId, sessionId: attempt.sessionId, queueItemId: attempt.queueItemId, link: attempt.targetUrl ?? attempt.link ?? '', sourceUrl: attempt.sourceUrl ?? attempt.targetUrl ?? attempt.link, publishedPostUrl: attempt.publishedPostUrl, timestamp: attempt.timestamp, attemptNumber: attempt.attemptNumber, action: attempt.action, result: attempt.result, error: attempt.errorMessage ?? attempt.error, tweetLabel: attempt.tweetLabel, bankId: attempt.bankId, bankName: attempt.bankName, itemPosition: attempt.itemPosition, durationMs: attempt.durationMs, adapter: attempt.adapter };
 }
 
 async function migrateSchema3To4(existing: AppMetaState): Promise<AppMetaState> {
@@ -162,7 +177,7 @@ export async function getWorkspaceState(workspaceId: string): Promise<WorkspaceS
       const effective = { ...meta.globalSettings, ...(local?.overrides ?? {}) };
       const runtime = result[V4_RUNTIME_KEY] as AutomationSessionRuntime | undefined;
       const attempts = (result[v4AttemptsKey(workspaceId)] as PublishAttempt[] | undefined) ?? [];
-      return normalizeWorkspaceState({ workspace, banks: ((result[v4BankKey(workspaceId)] as TweetBank[] | undefined) ?? []).map((bank) => ({ ...bank, favorite: bank.favorite ?? false, archived: bank.archived ?? false })), queue: ((result[v4QueueKey(workspaceId)] as QueueItem[] | undefined) ?? []).map((item) => ({ ...item, workspaceId })), session: runtime?.workspaceId === workspaceId ? sessionFromRuntime(runtime, effective) : null, history: attempts.map((attempt) => ({ id: attempt.id, workspaceId, sessionId: attempt.sessionId, queueItemId: attempt.queueItemId, link: attempt.targetUrl ?? attempt.link ?? '', timestamp: attempt.timestamp, attemptNumber: attempt.attemptNumber, action: attempt.action, result: attempt.result, error: attempt.errorMessage ?? attempt.error })), historicalSessions: ((result[v4SessionsKey(workspaceId)] as AutomationSessionRecord[] | undefined) ?? []) }, workspaceId, workspace);
+      return normalizeWorkspaceState({ workspace, banks: ((result[v4BankKey(workspaceId)] as TweetBank[] | undefined) ?? []).map((bank) => ({ ...bank, favorite: bank.favorite ?? false, archived: bank.archived ?? false })), queue: ((result[v4QueueKey(workspaceId)] as QueueItem[] | undefined) ?? []).map((item) => ({ ...item, workspaceId })), session: runtime?.workspaceId === workspaceId ? sessionFromRuntime(runtime, effective) : null, history: attempts.map((attempt) => fromV4Attempt(attempt, workspaceId)), historicalSessions: ((result[v4SessionsKey(workspaceId)] as AutomationSessionRecord[] | undefined) ?? []) }, workspaceId, workspace);
     }
   }
   const result = await chrome.storage.local.get(workspaceKey(workspaceId));
@@ -370,7 +385,7 @@ export async function addAttempt(attempt: PublishAttempt | LegacyPublishAttempt)
   const meta = await getMeta();
   const workspaceId = attempt.workspaceId ?? meta.automationWorkspaceId ?? meta.activeWorkspaceId;
   const sourceUrl = ('sourceUrl' in attempt ? attempt.sourceUrl : undefined) ?? ('targetUrl' in attempt ? attempt.targetUrl : attempt.link) ?? '';
-  const legacy: LegacyPublishAttempt = { id: attempt.id, workspaceId, sessionId: attempt.sessionId, queueItemId: attempt.queueItemId, link: sourceUrl, sourceUrl, publishedPostUrl: 'publishedPostUrl' in attempt ? attempt.publishedPostUrl : undefined, timestamp: attempt.timestamp, attemptNumber: attempt.attemptNumber, action: attempt.action, result: attempt.result, error: 'errorMessage' in attempt ? attempt.errorMessage ?? attempt.error : attempt.error };
+  const legacy: LegacyPublishAttempt = { id: attempt.id, workspaceId, sessionId: attempt.sessionId, queueItemId: attempt.queueItemId, link: sourceUrl, sourceUrl, publishedPostUrl: 'publishedPostUrl' in attempt ? attempt.publishedPostUrl : undefined, timestamp: attempt.timestamp, attemptNumber: attempt.attemptNumber, action: attempt.action, result: attempt.result, error: 'errorMessage' in attempt ? attempt.errorMessage ?? attempt.error : attempt.error, tweetLabel: 'tweetLabel' in attempt ? attempt.tweetLabel : undefined, bankId: 'bankId' in attempt ? attempt.bankId : undefined, bankName: 'bankName' in attempt ? attempt.bankName : undefined, itemPosition: 'itemPosition' in attempt ? attempt.itemPosition : undefined, durationMs: 'durationMs' in attempt ? attempt.durationMs : undefined, adapter: 'adapter' in attempt ? attempt.adapter : undefined };
   await updateWorkspaceState(workspaceId, (state) => ({ ...state, history: [...state.history, legacy].slice(-2000) }));
 }
 export async function getHistoricalSessions(workspaceId: string): Promise<HistoricalSession[]> {
