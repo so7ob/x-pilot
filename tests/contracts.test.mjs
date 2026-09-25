@@ -98,6 +98,30 @@ test('Unified activity records preserve source and published post links', () => 
   assert.match(uiSource, /sessions\.sourceLink/);
 });
 
+test('v1.13.2 published-post URL extraction trusts only post-publish signals (Closes #67)', () => {
+  // Adapter: toast-first extraction + pre-click snapshot; the old blanket
+  // "last status anchor in the DOM" strategy is forbidden forever.
+  assert.match(contentAdapter, /const PROFILE_LINK_SELECTOR = 'a\[data-testid="AppTabBar_Profile_Link"\]'/);
+  assert.match(contentAdapter, /const STATUS_ANCHOR_SELECTOR = `a\$\{LB\}href\*="\/status\/"]`/);
+  assert.match(contentAdapter, /const TOAST_LINK_SELECTOR = `\[data-testid="toast"\] \$\{STATUS_ANCHOR_SELECTOR\}`/);
+  assert.match(contentAdapter, /prePublishStatusHrefs = snapshotStatusHrefs\(\)/, 'publish() must freeze the pre-click status-link population');
+  assert.doesNotMatch(contentAdapter, /\.at\(-1\)/, 'blanket last-link extraction is forbidden (it recorded foreign posts)');
+  assert.match(contentAdapter, /from '\.\.\/\.\.\/domain\/published-post-url(\.ts)?'/);
+  // Domain: pure canonicalizer + author guard + engine-side shape guard exist.
+  const postUrl = fs.readFileSync(path.join(root, 'src/domain/published-post-url.ts'), 'utf8');
+  assert.match(postUrl, /export function parseStatusUrl/);
+  assert.match(postUrl, /export function canonicalStatusUrl/);
+  assert.match(postUrl, /export function isAuthoredBy/);
+  assert.match(postUrl, /export function isOwnPermalink/);
+  assert.match(postUrl, /export function sanitizePublishedPostUrl/);
+  // Engine: nothing un-sanitized may reach history.
+  assert.match(engineSource, /const publishedPostUrl = sanitizePublishedPostUrl\(publishedUrlResult\?\.publishedPostUrl\)/);
+  // Fixtures: the exact user regression (foreign analytics row) stays pinned.
+  const domFixtures = fs.readFileSync(path.join(root, 'tests/x-provider-dom.test.mjs'), 'utf8');
+  assert.match(domFixtures, /Minahil42298354\/status\/2103137624256885245\/analytics/, 'wrong-account regression fixture must stay');
+  assert.match(domFixtures, /2103265707043835909/, 'correct-post fixture must stay');
+});
+
 test('v1.13 publish attempts capture the full tweet snapshot analytically', () => {
   // Model: analytical snapshot fields are optional (backward compatible).
   assert.match(models, /tweetLabel\?: string/);
@@ -139,7 +163,8 @@ test('v1.13.1 session log linkage: record id = session id, sync lands, v4 round-
   // Engine: repair wiring in recovery for pre-1.13.1 data.
   assert.match(engineSource, /import \{ buildStartOverQueue, countStartOverResets, hasFutureRecoveryAlarm, normalizeRecovery, repairSessionHistoryLinks \} from '\.\.\/domain\/recovery';/);
   assert.match(engineSource, /export async function repairHistoricalSessionLinks/);
-  assert.match(engineSource, /const repairedSessionIds = await repairHistoricalSessionLinks\(\);/);
+  assert.match(engineSource, /await repairHistoricalSessionLinks\(\);/);
+  assert.match(engineSource, /if \(state\.session\) \{\s*state = await ensureHistoricalSession\(state\);\s*await syncHistoricalSession\(state\);\s*\}/, 'recovery must unconditionally ensure + sync the live session record');
   // Recovery: conservative pure repair — re-link by renaming, never delete.
   const recovery = fs.readFileSync(path.join(root, 'src/domain/recovery.ts'), 'utf8');
   assert.match(recovery, /export function repairSessionHistoryLinks/);
